@@ -68,6 +68,12 @@ function repeatedPreviousPage(initial: string): string {
 </changes></partial-response>`;
 }
 
+function distinctRecordsAtWrongPage(page2: string, viewState = "WRONG_PAGE_VIEWSTATE"): string {
+  return page2
+    .replace('data-current-page="2"', 'data-current-page="1"')
+    .replace("FIXTURE_VIEWSTATE_2", viewState);
+}
+
 class QueueTransport implements PjHttpTransport {
   readonly requests: ControlledRequest[] = [];
   readonly preflight = vi.fn(async () => {
@@ -242,5 +248,69 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       "La página 2 repitió silenciosamente la anterior",
     );
     expect(http.requests.filter((request) => request.page === 2)).toHaveLength(2);
+  });
+
+  it("recupera si el target 2 responde como página 1 aunque traiga IDs distintos", async () => {
+    const [initial, page1, page2] = await Promise.all([
+      fixture("initial.html"),
+      fixture("search-page-1.html"),
+      fixture("partial-page-2.xml"),
+    ]);
+    const recoveredPage1 = page1.replaceAll("FIXTURE_VIEWSTATE_1", "RECOVERED_VIEWSTATE_1");
+    const wrongPage = distinctRecordsAtWrongPage(page2);
+    const http = new QueueTransport([
+      response(initial),
+      response(page1),
+      response(wrongPage, "text/xml;charset=UTF-8"),
+      response(initial),
+      response(recoveredPage1),
+      response(page2, "text/xml;charset=UTF-8"),
+    ]);
+    const adapter = new PjAdapter(config, {
+      http,
+      logger: createLogger({ runId: "wrong-target-recovery-test", level: "silent" }),
+    });
+
+    const first = await adapter.search({ court: "supreme", query: "derecho" });
+    const recovered = await adapter.nextPage();
+
+    expect(recovered.pagination.currentPage).toBe(2);
+    expect(recovered.records.map(({ nativeId }) => nativeId)).not.toEqual(
+      first.records.map(({ nativeId }) => nativeId),
+    );
+    expect(http.requests.filter((request) => request.page === 2)).toHaveLength(2);
+  });
+
+  it("falla estructuralmente tras una segunda respuesta que no alcanza el target", async () => {
+    const [initial, page1, page2] = await Promise.all([
+      fixture("initial.html"),
+      fixture("search-page-1.html"),
+      fixture("partial-page-2.xml"),
+    ]);
+    const recoveredPage1 = page1.replaceAll("FIXTURE_VIEWSTATE_1", "RECOVERED_VIEWSTATE_1");
+    const http = new QueueTransport([
+      response(initial),
+      response(page1),
+      response(distinctRecordsAtWrongPage(page2), "text/xml;charset=UTF-8"),
+      response(initial),
+      response(recoveredPage1),
+      response(
+        distinctRecordsAtWrongPage(page2, "SECOND_WRONG_PAGE_VIEWSTATE"),
+        "text/xml;charset=UTF-8",
+      ),
+    ]);
+    const adapter = new PjAdapter(config, {
+      http,
+      logger: createLogger({ runId: "bounded-wrong-target-test", level: "silent" }),
+    });
+
+    const first = await adapter.search({ court: "supreme", query: "derecho" });
+    await expect(adapter.nextPage()).rejects.toThrow("La página 2 respondió como página 1");
+
+    expect(http.requests.filter((request) => request.page === 2)).toHaveLength(2);
+    expect(adapter.currentResults.pagination.currentPage).toBe(1);
+    expect(adapter.currentResults.records.map(({ nativeId }) => nativeId)).toEqual(
+      first.records.map(({ nativeId }) => nativeId),
+    );
   });
 });

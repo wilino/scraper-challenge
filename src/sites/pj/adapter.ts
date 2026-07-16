@@ -54,6 +54,20 @@ function contentType(response: ControlledResponse): string {
   return response.headers["content-type"] ?? "text/html;charset=UTF-8";
 }
 
+function pageResponseMismatch(
+  parsed: PjParsedResults,
+  previous: PjParsedResults,
+  targetPage: number,
+): string | undefined {
+  if (parsed.pagination.currentPage !== targetPage) {
+    return `La página ${String(targetPage)} respondió como página ${String(parsed.pagination.currentPage)}`;
+  }
+  if (parsed.fingerprint === previous.fingerprint) {
+    return `La página ${String(targetPage)} repitió silenciosamente la anterior`;
+  }
+  return undefined;
+}
+
 export class PjAdapter {
   readonly #http: PjHttpTransport;
   readonly #config: ScraperConfig;
@@ -165,7 +179,6 @@ export class PjAdapter {
           signal,
         )
       : await this.#requestAjax(pageAjaxControls(page), "paginate", page, signal);
-    this.#acceptPartial(response, "formBuscador:panel");
     const parsed = parseResultsPage(response.data, {
       baseUrl: this.#config.baseUrl,
       currentPage: page,
@@ -174,19 +187,19 @@ export class PjAdapter {
       previousViewState: previous.viewState,
       requireChangedViewState: true,
     });
-    if (parsed.fingerprint === previous.fingerprint) {
+    const mismatch = pageResponseMismatch(parsed, previous, page);
+    if (mismatch !== undefined) {
       if (recover) {
         this.#logger.warn(
-          { page },
-          "PJ repitió silenciosamente la página anterior; reconstruyendo la sesión JSF",
+          { page, receivedPage: parsed.pagination.currentPage, reason: mismatch },
+          "PJ no alcanzó la página objetivo; reconstruyendo la sesión JSF",
         );
         await this.#recoverToPage(page - 1, signal);
         return this.#requestPage(page, false, signal);
       }
-      throw new PjAdapterStateError(
-        `La página ${String(page)} repitió silenciosamente la anterior`,
-      );
+      throw new PjAdapterStateError(mismatch);
     }
+    this.#acceptPartial(response, "formBuscador:panel");
     this.#results = parsed;
     return parsed;
   }
