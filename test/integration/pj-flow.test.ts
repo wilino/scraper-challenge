@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 
+import { load } from "cheerio";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ScraperConfig } from "../../src/config/env.js";
@@ -53,6 +54,18 @@ function response(
     url: `${config.baseUrl}${config.resultsPath}`,
     attempts: 1,
   };
+}
+
+function repeatedPreviousPage(initial: string): string {
+  const $ = load(initial);
+  const panel = $("[id='formBuscador:panel']").prop("outerHTML");
+  if (panel === null) throw new Error("Fixture inicial sin panel de resultados");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<partial-response><changes>
+  <update id="formBuscador:data1"><![CDATA[<span id="formBuscador:data1" data-current-page="2" data-max-value="15120"><span class="rf-ds-act">2</span></span>]]></update>
+  <update id="formBuscador:panel"><![CDATA[${panel}]]></update>
+  <update id="javax.faces.ViewState"><![CDATA[SILENT_REPEAT_VIEWSTATE]]></update>
+</changes></partial-response>`;
 }
 
 class QueueTransport implements PjHttpTransport {
@@ -162,5 +175,72 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
     expect(pageRequests).toHaveLength(2);
     expect(String(pageRequests[0]?.body)).toContain("FIXTURE_VIEWSTATE_1");
     expect(String(pageRequests[1]?.body)).toContain("RECOVERED_VIEWSTATE_1");
+  });
+
+  it("rebootstrappea una repetición silenciosa y reintenta la página objetivo una sola vez", async () => {
+    const [initial, page1, page2] = await Promise.all([
+      fixture("initial.html"),
+      fixture("search-page-1.html"),
+      fixture("partial-page-2.xml"),
+    ]);
+    const recoveredPage1 = page1.replaceAll("FIXTURE_VIEWSTATE_1", "RECOVERED_VIEWSTATE_1");
+    const http = new QueueTransport([
+      response(initial),
+      response(page1),
+      response(repeatedPreviousPage(page1), "text/xml;charset=UTF-8"),
+      response(initial),
+      response(recoveredPage1),
+      response(page2, "text/xml;charset=UTF-8"),
+    ]);
+    const adapter = new PjAdapter(config, {
+      http,
+      logger: createLogger({ runId: "silent-repeat-test", level: "silent" }),
+    });
+
+    const first = await adapter.search({ court: "supreme", query: "derecho" });
+    const recovered = await adapter.nextPage();
+    const pageRequests = http.requests.filter((request) => request.page === 2);
+
+    expect(first.records.map(({ nativeId }) => nativeId)).toHaveLength(10);
+    expect(recovered.pagination.currentPage).toBe(2);
+    expect(recovered.records.map(({ nativeId }) => nativeId)).toEqual(
+      Array.from(
+        { length: 10 },
+        (_, index) => `00000000-0000-4000-8000-${String(index + 11).padStart(12, "0")}`,
+      ),
+    );
+    expect(pageRequests).toHaveLength(2);
+    expect(String(pageRequests[0]?.body)).toContain("FIXTURE_VIEWSTATE_1");
+    expect(String(pageRequests[1]?.body)).toContain("RECOVERED_VIEWSTATE_1");
+  });
+
+  it("abandona tras una segunda repetición silenciosa para evitar un bucle", async () => {
+    const [initial, page1] = await Promise.all([
+      fixture("initial.html"),
+      fixture("search-page-1.html"),
+    ]);
+    const recoveredPage1 = page1.replaceAll("FIXTURE_VIEWSTATE_1", "RECOVERED_VIEWSTATE_1");
+    const repeated = repeatedPreviousPage(page1);
+    const http = new QueueTransport([
+      response(initial),
+      response(page1),
+      response(repeated, "text/xml;charset=UTF-8"),
+      response(initial),
+      response(recoveredPage1),
+      response(
+        repeated.replace("SILENT_REPEAT_VIEWSTATE", "SECOND_REPEAT_VIEWSTATE"),
+        "text/xml;charset=UTF-8",
+      ),
+    ]);
+    const adapter = new PjAdapter(config, {
+      http,
+      logger: createLogger({ runId: "bounded-repeat-test", level: "silent" }),
+    });
+
+    await adapter.search({ court: "supreme", query: "derecho" });
+    await expect(adapter.nextPage()).rejects.toThrow(
+      "La página 2 repitió silenciosamente la anterior",
+    );
+    expect(http.requests.filter((request) => request.page === 2)).toHaveLength(2);
   });
 });

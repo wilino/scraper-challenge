@@ -13,6 +13,25 @@ describe("configuración", () => {
     expect(config.baseUrl).toBe("https://jurisprudencia.pj.gob.pe");
     expect(config.startPath).toContain("inicio.xhtml");
     expect(config.outputDir).toBe(path.join(cwd, "output"));
+    expect(config.connectTimeoutMs).toBe(15_000);
+    expect(config.requestTimeoutMs).toBe(120_000);
+    expect(config.pdfTimeoutMs).toBe(120_000);
+  });
+
+  it("permite configurar por separado los timeouts de conexión, HTML y PDF", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "pj-config-"));
+    const config = loadConfig(
+      {
+        CONNECT_TIMEOUT_MS: "10000",
+        REQUEST_TIMEOUT_MS: "121000",
+        PDF_TIMEOUT_MS: "122000",
+      },
+      cwd,
+    );
+
+    expect(config.connectTimeoutMs).toBe(10_000);
+    expect(config.requestTimeoutMs).toBe(121_000);
+    expect(config.pdfTimeoutMs).toBe(122_000);
   });
 
   it("falla con un mensaje accionable cuando el delay mínimo supera el máximo", () => {

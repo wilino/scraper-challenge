@@ -175,6 +175,14 @@ export class PjAdapter {
       requireChangedViewState: true,
     });
     if (parsed.fingerprint === previous.fingerprint) {
+      if (recover) {
+        this.#logger.warn(
+          { page },
+          "PJ repitió silenciosamente la página anterior; reconstruyendo la sesión JSF",
+        );
+        await this.#recoverToPage(page - 1, signal);
+        return this.#requestPage(page, false, signal);
+      }
       throw new PjAdapterStateError(
         `La página ${String(page)} repitió silenciosamente la anterior`,
       );
