@@ -179,7 +179,7 @@ Particiones recorridas, en orden:
 
   - supreme
   - superior
-  - historical-arbitration
+  - historical-arbitration-lima
 
 El descubrimiento enriquece cada fila con su detalle, deduplica por identidades fuertes, registra la pertenencia a cada partición y prepara el manifest de descarga. No descarga los PDF.
 
