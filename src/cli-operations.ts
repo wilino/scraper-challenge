@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -13,6 +13,7 @@ import type { ScraperConfig } from "./config/env.js";
 import { DiscoveryOrchestrator } from "./core/discovery-orchestrator.js";
 import type { DiscoverySummary } from "./core/discovery-types.js";
 import { DownloadManifestStore } from "./core/download-manifest-store.js";
+import type { CompactDownloadState } from "./core/download-manifest-store.js";
 import { DownloadWorker, type DownloadRunResult } from "./core/download-worker.js";
 import { FailureStore } from "./core/failure-store.js";
 import { PjHttpClient } from "./core/http-client.js";
@@ -35,6 +36,9 @@ import {
 } from "./sites/pj/historical-discovery-source.js";
 
 const PARTITIONS = ["supreme", "superior", HISTORICAL_PARTITION] as const;
+
+class DownloadScanLimitReached extends Error {}
+class DocumentPreflightComplete extends Error {}
 
 function queryHash(): string {
   return createHash("sha256")
@@ -100,11 +104,7 @@ function discoveryOperationSummary(
   };
 }
 
-function documentPartitions(documents: readonly ScrapedDocument[]): PartitionSummary[] {
-  const grouped = new Map<string, number>();
-  for (const document of documents) {
-    grouped.set(document.partitionId, (grouped.get(document.partitionId) ?? 0) + 1);
-  }
+function documentPartitions(grouped: ReadonlyMap<string, number>): PartitionSummary[] {
   return [...grouped].map(([partitionId, documentsCount]) => ({
     partitionId,
     pages: 0,
@@ -117,7 +117,7 @@ function documentPartitions(documents: readonly ScrapedDocument[]): PartitionSum
 
 function downloadOperationSummary(
   command: "download" | "retry-failed",
-  documents: readonly ScrapedDocument[],
+  partitions: ReadonlyMap<string, number>,
   result: DownloadRunResult,
   startedAt: number,
   rateLimitResponses: number,
@@ -125,7 +125,7 @@ function downloadOperationSummary(
 ): OperationSummary {
   return {
     command,
-    partitions: documentPartitions(documents),
+    partitions: documentPartitions(partitions),
     pdfs: { downloaded: result.downloaded, existing: result.skipped, failed: result.failed },
     rateLimitResponses,
     globalTotal: { initial: null, final: null },
@@ -136,22 +136,95 @@ function downloadOperationSummary(
   };
 }
 
-async function existingDocuments(config: ScraperConfig): Promise<ScrapedDocument[]> {
+async function existingDocuments(
+  config: ScraperConfig,
+  signal?: AbortSignal,
+): Promise<JsonlStore<ScrapedDocument>> {
   const filePath = path.join(config.outputDir, "data", "documents.jsonl");
+  let size: number;
   try {
-    await access(filePath);
+    size = (await stat(filePath)).size;
   } catch {
     throw new CliUsageError(
       "No existe data/documents.jsonl; ejecute discover antes de descargar PDFs",
     );
   }
-  const { records } = await new JsonlStore(filePath, scrapedDocumentSchema).readAll();
-  if (records.length === 0) {
+  if (size === 0) {
     throw new CliUsageError(
       "data/documents.jsonl no contiene documentos; ejecute discover antes de descargar PDFs",
     );
   }
-  return records;
+  const documents = new JsonlStore(filePath, scrapedDocumentSchema);
+  const hasDocument = await documents
+    .scan(() => {
+      throw new DocumentPreflightComplete();
+    }, signal)
+    .then(() => false)
+    .catch((error: unknown) => {
+      if (error instanceof DocumentPreflightComplete) return true;
+      throw error;
+    });
+  if (!hasDocument) {
+    throw new CliUsageError(
+      "data/documents.jsonl no contiene documentos; ejecute discover antes de descargar PDFs",
+    );
+  }
+  return documents;
+}
+
+export interface DownloadDocumentScanSummary {
+  documents: number;
+  selected: number;
+  partitions: Map<string, number>;
+}
+
+export function retryEligibleDocumentIds(
+  manifestStates: ReadonlyMap<string, CompactDownloadState>,
+  eligibleFailureIds: ReadonlySet<string>,
+  signal?: AbortSignal,
+): Set<string> {
+  const documentIds = new Set<string>();
+  for (const [documentId, state] of manifestStates) {
+    signal?.throwIfAborted();
+    if (
+      typeof state !== "string" &&
+      state.state === "failed" &&
+      eligibleFailureIds.has(state.failureId)
+    ) {
+      documentIds.add(documentId);
+    }
+  }
+  return documentIds;
+}
+
+export async function scanDownloadDocuments(
+  documents: JsonlStore<ScrapedDocument>,
+  retryEligibleIds: ReadonlySet<string> | undefined,
+  visit: (document: ScrapedDocument) => Promise<boolean>,
+  signal?: AbortSignal,
+): Promise<DownloadDocumentScanSummary> {
+  const summary: DownloadDocumentScanSummary = {
+    documents: 0,
+    selected: 0,
+    partitions: new Map(),
+  };
+  let reachedLimit = false;
+  try {
+    await documents.scan(async (document) => {
+      summary.documents += 1;
+      if (retryEligibleIds !== undefined && !retryEligibleIds.has(document.documentId)) return;
+      summary.selected += 1;
+      summary.partitions.set(
+        document.partitionId,
+        (summary.partitions.get(document.partitionId) ?? 0) + 1,
+      );
+      if (reachedLimit) throw new DownloadScanLimitReached();
+      reachedLimit = !(await visit(document));
+    }, signal);
+  } catch (error: unknown) {
+    if (!(error instanceof DownloadScanLimitReached)) throw error;
+  }
+  return summary;
 }
 
 export function selectRetryEligibleDocuments(
@@ -236,26 +309,23 @@ export class DefaultCliOperations implements CliOperations {
     context: CommandContext,
   ): Promise<OperationSummary> {
     const startedAt = Date.now();
-    const documents = await existingDocuments(context.config);
+    const documents = await existingDocuments(context.config, context.signal);
     const manifestStore = new DownloadManifestStore(
       path.join(context.config.outputDir, "data", "download-manifest.jsonl"),
     );
     const failureStore = new FailureStore(
       path.join(context.config.outputDir, "data", "failures.jsonl"),
     );
-    let selected = documents;
-    if (command === "retry-failed") {
-      const [failureHistory, currentManifest] = await Promise.all([
-        failureStore.readAll(),
-        manifestStore.currentStates(),
-      ]);
-      selected = selectRetryEligibleDocuments(
-        documents,
-        failureHistory.records,
-        currentManifest,
-        new Date(),
-      );
-    }
+    const manifestStates =
+      command === "retry-failed" ? await manifestStore.compactStates(context.signal) : undefined;
+    const retryEligibleIds =
+      manifestStates === undefined
+        ? undefined
+        : retryEligibleDocumentIds(
+            manifestStates,
+            await failureStore.retryEligibleFailureIds(new Date(), context.signal),
+            context.signal,
+          );
     const logger = createLogger({
       runId: randomUUID(),
       level: options.logLevel ?? context.config.logLevel,
@@ -272,22 +342,43 @@ export class DefaultCliOperations implements CliOperations {
       }),
       manifestStore,
       failureStore,
+      ...(manifestStates === undefined ? {} : { manifestStates }),
     });
     try {
-      const result = await worker.run(selected, {
-        ...(options.limit === undefined ? {} : { limit: options.limit }),
-        ...(command === "retry-failed" ? { retryFailedOnly: true } : {}),
-        signal: context.signal,
-      });
+      let scanSummary: DownloadDocumentScanSummary = {
+        documents: 0,
+        selected: 0,
+        partitions: new Map(),
+      };
+      const result = await worker.runStreaming(
+        async (visit) => {
+          scanSummary = await scanDownloadDocuments(
+            documents,
+            retryEligibleIds,
+            visit,
+            context.signal,
+          );
+        },
+        {
+          ...(options.limit === undefined ? {} : { limit: options.limit }),
+          ...(command === "retry-failed" ? { retryFailedOnly: true } : {}),
+          signal: context.signal,
+        },
+      );
+      if (scanSummary.documents === 0) {
+        throw new CliUsageError(
+          "data/documents.jsonl no contiene documentos; ejecute discover antes de descargar PDFs",
+        );
+      }
       return downloadOperationSummary(
         command,
-        selected,
+        scanSummary.partitions,
         result,
         startedAt,
         client.metricSnapshot().rateLimitResponses,
         options.limit !== undefined &&
           result.processed >= options.limit &&
-          selected.length > result.processed,
+          scanSummary.selected > result.processed,
       );
     } finally {
       logger.flush();

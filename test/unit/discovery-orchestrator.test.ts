@@ -395,6 +395,9 @@ describe("orquestador de descubrimiento", () => {
       (await readFile(path.join(root, "data/documents.jsonl"), "utf8")).trim().split("\n"),
     ).toHaveLength(1);
     expect(await readFile(path.join(root, "state/completed-ids.txt"), "utf8")).toContain(uuid(1));
+    expect(
+      (await readFile(path.join(root, "data/download-manifest.jsonl"), "utf8")).trim().split("\n"),
+    ).toHaveLength(1);
   });
 
   it("mantiene G3 bloqueado aunque todas las particiones terminen naturalmente", async () => {

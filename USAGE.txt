@@ -183,6 +183,8 @@ Particiones recorridas, en orden:
 
 El descubrimiento enriquece cada fila con su detalle, deduplica por identidades fuertes, registra la pertenencia a cada partición y prepara el manifest de descarga. No descarga los PDF.
 
+Los JSONL existentes se rehidratan por streaming y se conservan únicamente índices compactos de identidad, manifest y fallos abiertos. Esto permite reanudar pasadas y descargas sobre un corpus grande sin cargar todos los documentos completos en memoria.
+
 
 6. CHECKPOINT Y REANUDACIÓN
 
@@ -252,6 +254,8 @@ Descargar como máximo 25 entradas procesables:
   npm run scrape -- download --limit 25
 
 download lee data/documents.jsonl y falla con error de uso si el archivo no existe o está vacío. Procesa los documentos en orden, respeta el manifest y no vuelve a solicitar un PDF descargado si el archivo local conserva ruta, tamaño, cabecera PDF y SHA-256 esperados.
+
+La lectura es incremental y cancelable. Sin --limit se valida todo documents.jsonl; con --limit la ejecución es deliberadamente parcial y deja el resto para una ejecución posterior sin afirmar completitud.
 
 Cada PDF se escribe primero con sufijo .part. Solo después de validar tamaño, cabecera %PDF-, longitud esperada y hash se renombra de forma atómica a .pdf. Al iniciar, se eliminan temporales .pdf.part abandonados.
 

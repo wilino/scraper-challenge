@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { DownloadManifestStore } from "../../src/core/download-manifest-store.js";
 import { reconcileDownloadCoverage } from "../../src/core/download-manifest.js";
@@ -283,6 +283,145 @@ describe("pipeline PDF seguro", () => {
       resolvedAt: "2026-07-16T00:00:00.000Z",
     });
     expect((await manifestStore.currentStates()).get(uuid(1))?.state).toBe("downloaded");
+  });
+
+  it("consume documentos por scanner sin materializar el corpus completo", async () => {
+    const outputDir = await root();
+    const manifestPath = path.join(outputDir, "manifest.jsonl");
+    const total = 10_000;
+    await writeFile(
+      manifestPath,
+      `${Array.from({ length: total }, (_, index) =>
+        JSON.stringify({
+          schemaVersion: 1,
+          eventId: uuid(index + 20_000),
+          documentId: uuid(index + 1),
+          occurredAt: "2026-07-16T00:00:00.000Z",
+          state: "pending",
+          request: { method: "GET", url: pdfUrl(index + 1) },
+        }),
+      ).join("\n")}\n`,
+      "utf8",
+    );
+    const worker = new DownloadWorker({
+      downloader: new PdfDownloader(new QueueClient([]), { outputDir, maxPdfBytes: 1024 }),
+      manifestStore: new DownloadManifestStore(manifestPath),
+      failureStore: new FailureStore(path.join(outputDir, "failures.jsonl")),
+    });
+    let generated = 0;
+
+    await expect(
+      worker.runStreaming(
+        async (visit) => {
+          for (let index = 1; index <= total; index += 1) {
+            generated += 1;
+            if (!(await visit(document(index)))) break;
+          }
+        },
+        { retryFailedOnly: true },
+      ),
+    ).resolves.toEqual({
+      processed: 0,
+      downloaded: 0,
+      skipped: 0,
+      failed: 0,
+      noPdf: 0,
+    });
+    expect(generated).toBe(total);
+  });
+
+  it("reutiliza el índice compacto precargado sin volver a escanear el manifest", async () => {
+    const outputDir = await root();
+    const manifestStore = new DownloadManifestStore(path.join(outputDir, "manifest.jsonl"));
+    const compactStates = vi.spyOn(manifestStore, "compactStates");
+    const states = new Map([[uuid(1), "no_pdf" as const]]);
+    const worker = new DownloadWorker({
+      downloader: new PdfDownloader(new QueueClient([]), { outputDir, maxPdfBytes: 1024 }),
+      manifestStore,
+      failureStore: new FailureStore(path.join(outputDir, "failures.jsonl")),
+      manifestStates: states,
+    });
+
+    await expect(worker.run([document(1, false)])).resolves.toEqual({
+      processed: 1,
+      downloaded: 0,
+      skipped: 0,
+      failed: 0,
+      noPdf: 1,
+    });
+    expect(compactStates).not.toHaveBeenCalled();
+  });
+
+  it("repara manifest failed aunque su failureId ya estuviera resuelto por una caída", async () => {
+    const outputDir = await root();
+    const manifestPath = path.join(outputDir, "manifest.jsonl");
+    const failurePath = path.join(outputDir, "failures.jsonl");
+    const failureId = uuid(801);
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        eventId: uuid(802),
+        documentId: uuid(1),
+        occurredAt: "2026-07-16T00:00:00.000Z",
+        state: "failed",
+        request: { method: "GET", url: pdfUrl(1) },
+        failureId,
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      failurePath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        failureId,
+        phase: "download",
+        documentId: uuid(1),
+        classification: "network",
+        attempts: 1,
+        retryable: true,
+        message: "ya resuelto antes de la caída",
+        resolution: "resolved",
+        occurredAt: "2026-07-16T00:00:00.000Z",
+        resolvedAt: "2026-07-16T00:01:00.000Z",
+      })}\n`,
+      "utf8",
+    );
+    const manifestStore = new DownloadManifestStore(manifestPath);
+    const failureStore = new FailureStore(failurePath);
+    const worker = new DownloadWorker({
+      downloader: new PdfDownloader(new QueueClient([() => response(validPdf)]), {
+        outputDir,
+        maxPdfBytes: 1024,
+      }),
+      manifestStore,
+      failureStore,
+      createId: () => uuid(803),
+    });
+
+    await expect(worker.run([document(1)])).resolves.toMatchObject({ downloaded: 1, failed: 0 });
+    expect((await failureStore.readAll()).records).toHaveLength(1);
+    expect((await manifestStore.currentStates()).get(uuid(1))?.state).toBe("downloaded");
+  });
+
+  it("respeta una señal ya abortada antes de inicializar y limpiar temporales", async () => {
+    const outputDir = await root();
+    const pdfDir = path.join(outputDir, "pdf");
+    await mkdir(pdfDir);
+    const temporary = path.join(pdfDir, "conservar.pdf.part");
+    await writeFile(temporary, "pendiente", "utf8");
+    const worker = new DownloadWorker({
+      downloader: new PdfDownloader(new QueueClient([]), { outputDir, maxPdfBytes: 1024 }),
+      manifestStore: new DownloadManifestStore(path.join(outputDir, "manifest.jsonl")),
+      failureStore: new FailureStore(path.join(outputDir, "failures.jsonl")),
+    });
+    const controller = new AbortController();
+    controller.abort(new Error("cancelado antes de iniciar"));
+
+    await expect(worker.run([document(1)], { signal: controller.signal })).rejects.toThrow(
+      "cancelado antes de iniciar",
+    );
+    await expect(readFile(temporary, "utf8")).resolves.toBe("pendiente");
   });
 
   it("detecta documentos omitidos y duplicados al reconciliar cobertura", () => {

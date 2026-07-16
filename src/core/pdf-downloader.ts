@@ -6,7 +6,7 @@ import type { Readable } from "node:stream";
 
 import type { ControlledResponse, PjHttpClient } from "./http-client.js";
 import { HttpRequestError } from "./http-errors.js";
-import type { DownloadManifestEvent } from "../models/download-manifest.js";
+import type { DownloadResumeState } from "./download-manifest-store.js";
 import type { ScrapedDocument } from "../models/document.js";
 import { httpRequestSpecSchema } from "../models/http-request.js";
 import { pdfFileName, relativeOutputPath, resolvePdfPath } from "../utils/file-names.js";
@@ -116,7 +116,7 @@ export class PdfDownloader {
 
   public async download(
     document: ScrapedDocument,
-    current?: DownloadManifestEvent,
+    current?: DownloadResumeState,
     signal?: AbortSignal,
   ): Promise<PdfDownloadResult> {
     if (document.pdf.state !== "pending") {
@@ -235,7 +235,7 @@ export class PdfDownloader {
   }
 
   private async validateExisting(
-    event: Extract<DownloadManifestEvent, { state: "downloaded" }>,
+    event: Extract<DownloadResumeState, { state: "downloaded" }>,
     expectedPath: string,
   ): Promise<Omit<PdfDownloadResult, "state" | "attempts"> | undefined> {
     const registeredPath = path.resolve(this.options.outputDir, event.relativePath);

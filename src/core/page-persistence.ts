@@ -19,10 +19,22 @@ export class PagePersistence {
   }
 
   public async initialize(): Promise<readonly ScrapedDocument[]> {
-    await this.#completedIds.load();
-    const { records } = await this.#documents.readAll();
-    for (const document of records) await this.#completedIds.add(document.documentId);
+    const records: ScrapedDocument[] = [];
+    await this.scanDocuments((document) => {
+      records.push(document);
+    });
     return records;
+  }
+
+  public async scanDocuments(
+    visit: (document: ScrapedDocument) => void | Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<{ records: number; truncatedLastLine: boolean }> {
+    await this.#completedIds.load();
+    return await this.#documents.scan(async (document) => {
+      await this.#completedIds.add(document.documentId);
+      await visit(document);
+    }, signal);
   }
 
   public hasDocument(documentId: string): boolean {

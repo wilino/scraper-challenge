@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import type { DownloadManifestStore } from "./download-manifest-store.js";
+import {
+  compactState,
+  type CompactDownloadState,
+  type DownloadManifestStore,
+  type DownloadResumeState,
+} from "./download-manifest-store.js";
 import type { FailureStore } from "./failure-store.js";
 import { HttpRequestError } from "./http-errors.js";
 import { PdfDownloadError, type PdfDownloader } from "./pdf-downloader.js";
@@ -26,9 +31,15 @@ export interface DownloadWorkerDependencies {
   downloader: PdfDownloader;
   manifestStore: DownloadManifestStore;
   failureStore: FailureStore;
+  manifestStates?: Map<string, CompactDownloadState>;
   now?: () => Date;
   createId?: () => string;
 }
+
+/** El scanner debe detener la producción cuando visit devuelve false. */
+export type DownloadDocumentScanner = (
+  visit: (document: ScrapedDocument) => Promise<boolean>,
+) => Promise<void>;
 
 function globalFailure(error: unknown): boolean {
   return (
@@ -67,8 +78,35 @@ export class DownloadWorker {
     documents: readonly ScrapedDocument[],
     options: DownloadWorkerOptions = {},
   ): Promise<DownloadRunResult> {
-    await this.dependencies.downloader.initialize();
-    const states = new Map(await this.dependencies.manifestStore.currentStates());
+    return await this.#run(async (visit) => {
+      for (const document of documents) if (!(await visit(document))) break;
+    }, options);
+  }
+
+  public async runStreaming(
+    scan: DownloadDocumentScanner,
+    options: DownloadWorkerOptions = {},
+  ): Promise<DownloadRunResult> {
+    return await this.#run(scan, options);
+  }
+
+  async #run(
+    scan: DownloadDocumentScanner,
+    options: DownloadWorkerOptions,
+  ): Promise<DownloadRunResult> {
+    options.signal?.throwIfAborted();
+    let initialization: Promise<Map<string, CompactDownloadState>> | undefined;
+    const initialize = (): Promise<Map<string, CompactDownloadState>> => {
+      initialization ??= (async () => {
+        options.signal?.throwIfAborted();
+        await this.dependencies.downloader.initialize();
+        return (
+          this.dependencies.manifestStates ??
+          (await this.dependencies.manifestStore.compactStates(options.signal))
+        );
+      })();
+      return initialization;
+    };
     const result: DownloadRunResult = {
       processed: 0,
       downloaded: 0,
@@ -77,39 +115,49 @@ export class DownloadWorker {
       noPdf: 0,
     };
     const limit = options.limit ?? Number.POSITIVE_INFINITY;
-    for (const document of documents) {
-      if (result.processed >= limit) break;
+    await scan(async (document) => {
+      if (result.processed >= limit) return false;
       options.signal?.throwIfAborted();
+      const states = await initialize();
       let current = states.get(document.documentId);
       if (document.pdf.state === "no_pdf") {
-        if (options.retryFailedOnly === true) continue;
-        if (current?.state !== "no_pdf") {
-          current = await this.appendNoPdf(document);
-          states.set(document.documentId, current);
+        if (options.retryFailedOnly === true) return true;
+        if (current !== "no_pdf") {
+          const event = await this.appendNoPdf(document);
+          states.set(document.documentId, compactState(event));
         }
         result.processed += 1;
         result.noPdf += 1;
-        continue;
+        return result.processed < limit;
       }
-      if (options.retryFailedOnly === true && current?.state !== "failed") continue;
+      if (
+        options.retryFailedOnly === true &&
+        (typeof current === "string" || current?.state !== "failed")
+      )
+        return true;
       if (current === undefined) {
-        current = await this.appendPending(document);
+        const event = await this.appendPending(document);
+        current = compactState(event);
         states.set(document.documentId, current);
       }
       result.processed += 1;
       try {
         const downloaded = await this.dependencies.downloader.download(
           document,
-          current,
+          resumeState(current),
           options.signal,
         );
         if (downloaded.state === "skipped") {
           result.skipped += 1;
-          continue;
+          return result.processed < limit;
         }
         const occurredAt = this.#now().toISOString();
-        if (current.state === "failed") {
-          await this.dependencies.failureStore.resolve(current.failureId, occurredAt);
+        if (typeof current !== "string" && current.state === "failed") {
+          await this.dependencies.failureStore.resolve(
+            current.failureId,
+            occurredAt,
+            options.signal,
+          );
         }
         const event: DownloadManifestEvent = {
           schemaVersion: 1,
@@ -124,11 +172,11 @@ export class DownloadWorker {
           effectiveUrl: downloaded.effectiveUrl,
         };
         await this.dependencies.manifestStore.append(event);
-        states.set(document.documentId, event);
+        states.set(document.documentId, compactState(event));
         result.downloaded += 1;
       } catch (error: unknown) {
         if (globalFailure(error)) throw error;
-        const failure = await this.appendFailure(document, error);
+        const failure = await this.appendFailure(document, error, options.signal);
         const event: DownloadManifestEvent = {
           schemaVersion: 1,
           eventId: this.#createId(),
@@ -139,10 +187,11 @@ export class DownloadWorker {
           failureId: failure.failureId,
         };
         await this.dependencies.manifestStore.append(event);
-        states.set(document.documentId, event);
+        states.set(document.documentId, compactState(event));
         result.failed += 1;
       }
-    }
+      return result.processed < limit;
+    });
     return result;
   }
 
@@ -174,7 +223,11 @@ export class DownloadWorker {
     return event;
   }
 
-  private async appendFailure(document: ScrapedDocument, error: unknown): Promise<ScrapeFailure> {
+  private async appendFailure(
+    document: ScrapedDocument,
+    error: unknown,
+    signal?: AbortSignal,
+  ): Promise<ScrapeFailure> {
     if (document.pdf.state !== "pending") throw new Error("Documento sin descriptor PDF");
     const now = this.#now();
     const retryable =
@@ -217,7 +270,11 @@ export class DownloadWorker {
       resolution: "open",
       occurredAt: now.toISOString(),
     };
-    await this.dependencies.failureStore.append(failure);
+    await this.dependencies.failureStore.append(failure, signal);
     return failure;
   }
+}
+
+function resumeState(current: CompactDownloadState): DownloadResumeState | undefined {
+  return typeof current === "string" ? undefined : current;
 }

@@ -2,12 +2,13 @@ import type { CorpusMembership } from "../models/corpus-membership.js";
 import { corpusMembershipSchema } from "../models/corpus-membership.js";
 import { JsonlStore } from "./jsonl-store.js";
 
-function passKey(partitionId: string, pass: number, token: string): string {
-  return `${partitionId}\u0000${String(pass)}\u0000${token}`;
-}
-
 function partitionKey(partitionId: string, token: string): string {
   return `${partitionId}\u0000${token}`;
+}
+
+interface StoredMembership {
+  identity: CorpusMembership["identity"];
+  passes: number[];
 }
 
 class DisjointSet {
@@ -45,41 +46,40 @@ export interface MembershipRegion {
 
 export class CorpusMembershipStore {
   readonly #store: JsonlStore<CorpusMembership>;
-  readonly #passKeys = new Set<string>();
-  readonly #partitionKeys = new Set<string>();
-  readonly #identityByMembership = new Map<string, CorpusMembership["identity"]>();
+  readonly #memberships = new Map<string, StoredMembership>();
   #loaded = false;
 
   constructor(filePath: string) {
     this.#store = new JsonlStore(filePath, corpusMembershipSchema);
   }
 
-  async initialize(): Promise<void> {
+  async initialize(signal?: AbortSignal): Promise<void> {
     if (this.#loaded) return;
-    const { records } = await this.#store.readAll();
-    for (const membership of records) this.#remember(membership);
+    await this.#store.scan((membership) => {
+      this.#remember(membership);
+    }, signal);
     this.#loaded = true;
   }
 
   async record(input: CorpusMembership): Promise<MembershipInsertResult> {
     await this.initialize();
     const membership = corpusMembershipSchema.parse(input);
-    const perPass = passKey(membership.partitionId, membership.pass, membership.membershipToken);
-    const perPartition = partitionKey(membership.partitionId, membership.membershipToken);
-    if (this.#passKeys.has(perPass)) {
+    const key = partitionKey(membership.partitionId, membership.membershipToken);
+    const current = this.#memberships.get(key);
+    if (current?.passes.includes(membership.pass) === true) {
       return { insertedInPass: false, newForPartition: false };
     }
-    const newForPartition = !this.#partitionKeys.has(perPartition);
+    const newForPartition = current === undefined;
     await this.#store.append(membership);
     this.#remember(membership);
     return { insertedInPass: true, newForPartition };
   }
 
   regions(): MembershipRegion[] {
-    const keys = [...this.#identityByMembership.keys()];
+    const keys = [...this.#memberships.keys()];
     const dsu = new DisjointSet(keys);
     const aliases = new Map<string, string>();
-    for (const [key, identity] of this.#identityByMembership) {
+    for (const [key, { identity }] of this.#memberships) {
       for (const alias of [identity.documentUuid, identity.pdfUuid]) {
         if (alias === undefined) continue;
         const previous = aliases.get(alias);
@@ -108,28 +108,31 @@ export class CorpusMembershipStore {
 
   newInPass(partitionId: string, pass: number): number {
     let total = 0;
-    for (const key of this.#passKeys) {
-      if (key.startsWith(`${partitionId}\u0000${String(pass)}\u0000`)) total += 1;
+    for (const [key, membership] of this.#memberships) {
+      if (key.startsWith(`${partitionId}\u0000`) && membership.passes.includes(pass)) total += 1;
     }
     return total;
   }
 
   #remember(membership: CorpusMembership): void {
-    this.#passKeys.add(
-      passKey(membership.partitionId, membership.pass, membership.membershipToken),
-    );
-    this.#partitionKeys.add(partitionKey(membership.partitionId, membership.membershipToken));
     const key = partitionKey(membership.partitionId, membership.membershipToken);
-    const previous = this.#identityByMembership.get(key);
-    this.#identityByMembership.set(key, {
-      ...(previous?.documentUuid === undefined ? {} : { documentUuid: previous.documentUuid }),
-      ...(previous?.pdfUuid === undefined ? {} : { pdfUuid: previous.pdfUuid }),
-      ...(membership.identity.documentUuid === undefined
-        ? {}
-        : { documentUuid: membership.identity.documentUuid }),
-      ...(membership.identity.pdfUuid === undefined
-        ? {}
-        : { pdfUuid: membership.identity.pdfUuid }),
+    const previous = this.#memberships.get(key);
+    const passes = previous?.passes ?? [];
+    if (!passes.includes(membership.pass)) passes.push(membership.pass);
+    this.#memberships.set(key, {
+      passes,
+      identity: {
+        ...(previous?.identity.documentUuid === undefined
+          ? {}
+          : { documentUuid: previous.identity.documentUuid }),
+        ...(previous?.identity.pdfUuid === undefined ? {} : { pdfUuid: previous.identity.pdfUuid }),
+        ...(membership.identity.documentUuid === undefined
+          ? {}
+          : { documentUuid: membership.identity.documentUuid }),
+        ...(membership.identity.pdfUuid === undefined
+          ? {}
+          : { pdfUuid: membership.identity.pdfUuid }),
+      },
     });
   }
 }

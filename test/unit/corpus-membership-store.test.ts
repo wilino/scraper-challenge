@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -72,4 +72,33 @@ describe("CorpusMembershipStore", () => {
 
     expect(store.regions()).toEqual([{ partitions: ["historical", "superior"], documents: 1 }]);
   });
+
+  it("rehidrata un ledger sintético grande sin arrays de eventos y conserva idempotencia", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "pj-membership-scale-"));
+    temporary.push(directory);
+    const filePath = path.join(directory, "memberships.jsonl");
+    const total = 10_000;
+    const events = Array.from({ length: total }, (_, index) => {
+      const id = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+      return JSON.stringify(event("supreme", 1, id));
+    });
+    await writeFile(filePath, `${events.join("\n")}\n`, "utf8");
+
+    const store = new CorpusMembershipStore(filePath);
+    await store.initialize();
+    expect(store.newInPass("supreme", 1)).toBe(total);
+    await expect(store.record(event("supreme", 1, eventId(total - 1)))).resolves.toEqual({
+      insertedInPass: false,
+      newForPartition: false,
+    });
+    await expect(store.record(event("supreme", 2, eventId(total - 1)))).resolves.toEqual({
+      insertedInPass: true,
+      newForPartition: false,
+    });
+    expect(store.newInPass("supreme", 2)).toBe(1);
+  });
 });
+
+function eventId(index: number): string {
+  return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}

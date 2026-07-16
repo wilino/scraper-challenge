@@ -17,10 +17,7 @@ import {
 } from "./discovery-types.js";
 import { PagePersistence } from "./page-persistence.js";
 import { checkpointSchema, type Checkpoint } from "../models/checkpoint.js";
-import {
-  downloadManifestEventSchema,
-  type DownloadManifestEvent,
-} from "../models/download-manifest.js";
+import { downloadManifestEventSchema } from "../models/download-manifest.js";
 import { scrapedDocumentSchema, type ScrapedDocument } from "../models/document.js";
 import type { CorpusIdentity } from "../models/corpus-membership.js";
 import type { ScrapeFailure } from "../models/failure.js";
@@ -57,6 +54,11 @@ interface MutablePartitionSummary {
   globalDuplicates: number;
   detailFailures: number;
   termination?: SuccessfulTermination;
+}
+
+interface StoredDocumentIdentity {
+  documentId: string;
+  pdfUuid?: string;
 }
 
 export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRecord> {
@@ -105,12 +107,14 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
     validateLimit(options.limit, "limit");
     validateLimit(options.maxPages, "maxPages");
     throwIfAborted(options.signal);
-    const storedDocuments = await this.#persistence.initialize();
-    const documentsByIdentity = new Map<string, ScrapedDocument>();
-    for (const document of storedDocuments) indexDocumentIdentities(documentsByIdentity, document);
-    await this.#memberships.initialize();
-    const manifestStates = new Map(await this.#manifest.currentStates());
-    for (const document of storedDocuments) await this.#ensureManifest(document, manifestStates);
+    const manifestDocumentIds = await this.#manifest.documentIds(options.signal);
+    const documentsByIdentity = new Map<string, StoredDocumentIdentity>();
+    await this.#persistence.scanDocuments(async (document) => {
+      indexDocumentIdentities(documentsByIdentity, compactDocumentIdentity(document));
+      await this.#ensureManifest(document, manifestDocumentIds);
+    }, options.signal);
+    await this.#memberships.initialize(options.signal);
+    await this.#failures.initialize(options.signal);
     const checkpoint = options.resume === true ? await this.#compatibleCheckpoint() : null;
     await this.#source.preflight(options.signal);
 
@@ -194,12 +198,14 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
               "detail",
               storedDocument.documentId,
               this.#now().toISOString(),
+              options.signal,
             );
             if (record.nativeId !== storedDocument.documentId) {
               await this.#failures.resolveOpenForDocument(
                 "detail",
                 record.nativeId,
                 this.#now().toISOString(),
+                options.signal,
               );
             }
             await this.#persistence.confirmCheckpoint(
@@ -220,7 +226,13 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
             if (isInterruption(error, options.signal)) throw error;
             const membership = await this.#recordMembership(partitionId, record);
             if (membership) summary.newCorpusMemberships += 1;
-            await this.#recordDetailFailure(record.nativeId, partitionId, page, error);
+            await this.#recordDetailFailure(
+              record.nativeId,
+              partitionId,
+              page,
+              error,
+              options.signal,
+            );
             summary.detailFailures += 1;
             await this.#persistence.confirmCheckpoint(
               this.#checkpoint(partitionId, page.parsed.pagination.currentPage, row + 1),
@@ -228,15 +240,16 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
             continue;
           }
           validateDocument(document, record, page, row);
-          const membership = await this.#recordMembership(partitionId, record, document);
+          const compactDocument = compactDocumentIdentity(document);
+          const membership = await this.#recordMembership(partitionId, record, compactDocument);
           if (membership) summary.newCorpusMemberships += 1;
-          await this.#ensureManifest(document, manifestStates);
+          await this.#ensureManifest(document, manifestDocumentIds);
           const inserted = await this.#persistence.confirmDocuments(
             [document],
             this.#checkpoint(partitionId, page.parsed.pagination.currentPage, row + 1),
           );
           if (inserted === 1) {
-            indexDocumentIdentities(documentsByIdentity, document);
+            indexDocumentIdentities(documentsByIdentity, compactDocument);
             summary.newDocuments += 1;
             totalNewDocuments += 1;
           } else {
@@ -246,6 +259,7 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
             "detail",
             document.documentId,
             this.#now().toISOString(),
+            options.signal,
           );
         }
         firstPage = false;
@@ -314,11 +328,8 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
     };
   }
 
-  async #ensureManifest(
-    document: ScrapedDocument,
-    states: Map<string, DownloadManifestEvent>,
-  ): Promise<void> {
-    if (states.has(document.documentId)) return;
+  async #ensureManifest(document: ScrapedDocument, documentIds: Set<string>): Promise<void> {
+    if (documentIds.has(document.documentId)) return;
     const base = {
       schemaVersion: 1 as const,
       eventId: this.#uuid(),
@@ -331,13 +342,13 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
         : { ...base, state: "no_pdf", reason: document.pdf.reason },
     );
     await this.#manifest.append(event);
-    states.set(document.documentId, event);
+    documentIds.add(document.documentId);
   }
 
   async #recordMembership(
     partitionId: string,
     record: TRecord,
-    knownDocument?: ScrapedDocument,
+    knownDocument?: StoredDocumentIdentity,
   ): Promise<boolean> {
     const sourceIdentity = this.#source.membershipIdentity?.(record) ?? {
       documentUuid: record.nativeId,
@@ -362,6 +373,7 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
     partitionId: string,
     page: DiscoveryPage,
     error: unknown,
+    signal?: AbortSignal,
   ): Promise<void> {
     const classification = classifyDetailFailure(error);
     const httpError = error instanceof HttpRequestError ? error : undefined;
@@ -388,7 +400,7 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
       resolution: "open",
       occurredAt: this.#now().toISOString(),
     };
-    await this.#failures.append(failure);
+    await this.#failures.append(failure, signal);
   }
 }
 
@@ -397,10 +409,11 @@ function validateLimit(value: number | undefined, name: string): void {
     throw new Error(`${name} debe ser un entero positivo`);
 }
 
-function mergeCorpusIdentity(source: CorpusIdentity, document: ScrapedDocument): CorpusIdentity {
-  const pdfUuid = pdfUuidFromDocument(document);
-  if (pdfUuid === undefined) return source;
-  return { ...source, pdfUuid };
+function mergeCorpusIdentity(
+  source: CorpusIdentity,
+  document: StoredDocumentIdentity,
+): CorpusIdentity {
+  return document.pdfUuid === undefined ? source : { ...source, pdfUuid: document.pdfUuid };
 }
 
 function pdfUuidFromDocument(document: ScrapedDocument): string | undefined {
@@ -413,10 +426,10 @@ function pdfUuidFromDocument(document: ScrapedDocument): string | undefined {
 }
 
 function indexDocumentIdentities(
-  index: Map<string, ScrapedDocument>,
-  document: ScrapedDocument,
+  index: Map<string, StoredDocumentIdentity>,
+  document: StoredDocumentIdentity,
 ): void {
-  for (const identity of [document.documentId, pdfUuidFromDocument(document)]) {
+  for (const identity of [document.documentId, document.pdfUuid]) {
     if (identity === undefined) continue;
     const previous = index.get(identity);
     if (previous !== undefined && previous.documentId !== document.documentId) {
@@ -424,6 +437,14 @@ function indexDocumentIdentities(
     }
     index.set(identity, document);
   }
+}
+
+function compactDocumentIdentity(document: ScrapedDocument): StoredDocumentIdentity {
+  const pdfUuid = pdfUuidFromDocument(document);
+  return {
+    documentId: document.documentId,
+    ...(pdfUuid === undefined ? {} : { pdfUuid }),
+  };
 }
 
 function classifyDetailFailure(error: unknown): ScrapeFailure["classification"] {

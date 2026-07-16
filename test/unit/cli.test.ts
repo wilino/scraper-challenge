@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -13,9 +13,17 @@ import {
   type OperationSummary,
 } from "../../src/cli-contract.js";
 import { exitCodeForError, parseCliArguments, runCli, type CommandHandler } from "../../src/cli.js";
-import { selectRetryEligibleDocuments } from "../../src/cli-operations.js";
+import {
+  retryEligibleDocumentIds,
+  scanDownloadDocuments,
+  selectRetryEligibleDocuments,
+} from "../../src/cli-operations.js";
 import type { ScraperConfig } from "../../src/config/env.js";
+import type { CompactDownloadState } from "../../src/core/download-manifest-store.js";
+import { FailureStore } from "../../src/core/failure-store.js";
 import { HttpRequestError, PreflightError } from "../../src/core/http-errors.js";
+import { JsonlStore } from "../../src/core/jsonl-store.js";
+import { scrapedDocumentSchema } from "../../src/models/document.js";
 import { PjStructuralError } from "../../src/sites/pj/parser.js";
 
 const config: ScraperConfig = {
@@ -194,6 +202,31 @@ describe("delegación y resumen CLI", () => {
     }
   });
 
+  it("rechaza documents.jsonl sin registros antes de leer manifest o limpiar temporales", async () => {
+    const outputDir = await mkdtemp(path.join(tmpdir(), "pj-cli-empty-file-"));
+    try {
+      await mkdir(path.join(outputDir, "data"));
+      await mkdir(path.join(outputDir, "pdf"));
+      await writeFile(path.join(outputDir, "data", "documents.jsonl"), " \n\t\n", "utf8");
+      await writeFile(
+        path.join(outputDir, "data", "download-manifest.jsonl"),
+        "manifest corrupto\n",
+        "utf8",
+      );
+      const temporary = path.join(outputDir, "pdf", "pendiente.pdf.part");
+      await writeFile(temporary, "no tocar", "utf8");
+      await expect(
+        runCli(["retry-failed"], undefined, {
+          config: { ...config, outputDir },
+          writeError: vi.fn(),
+        }),
+      ).resolves.toBe(2);
+      await expect(readFile(temporary, "utf8")).resolves.toBe("no tocar");
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
   it("retry-failed respeta manifest actual, retryable, resolución y nextRetryAt", () => {
     const request = {
       method: "GET" as const,
@@ -247,6 +280,144 @@ describe("delegación y resumen CLI", () => {
         new Date("2026-07-16T12:00:00.000Z"),
       ).map(({ documentId }) => documentId),
     ).toEqual([documents[0]?.documentId]);
+  });
+
+  it("detiene el scan de download al confirmar un documento más allá del límite", async () => {
+    const outputDir = await mkdtemp(path.join(tmpdir(), "pj-cli-limit-"));
+    try {
+      const filePath = path.join(outputDir, "documents.jsonl");
+      const documents = Array.from({ length: 10 }, (_, index) => ({
+        schemaVersion: 1 as const,
+        documentId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        partitionId: "supreme",
+        sourcePage: 1,
+        sourceRow: index,
+        discoveredAt: "2026-07-16T00:00:00.000Z",
+        metadata: { list: {}, detail: {}, unknownFields: {} },
+        pdf: { state: "no_pdf" as const, reason: "not_advertised" as const },
+      }));
+      await writeFile(
+        filePath,
+        `${documents.map((document) => JSON.stringify(document)).join("\n")}\n`,
+        "utf8",
+      );
+      let visits = 0;
+      const result = await scanDownloadDocuments(
+        new JsonlStore(filePath, scrapedDocumentSchema),
+        undefined,
+        () => {
+          visits += 1;
+          return Promise.resolve(visits < 5);
+        },
+      );
+
+      expect(visits).toBe(5);
+      expect(result).toEqual({
+        documents: 6,
+        selected: 6,
+        partitions: new Map([["supreme", 6]]),
+      });
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  it("propaga aborto durante el scan de documentos de download", async () => {
+    const outputDir = await mkdtemp(path.join(tmpdir(), "pj-cli-abort-scan-"));
+    try {
+      const filePath = path.join(outputDir, "documents.jsonl");
+      const documents = Array.from({ length: 100 }, (_, index) => ({
+        schemaVersion: 1 as const,
+        documentId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        partitionId: "supreme",
+        sourcePage: 1,
+        sourceRow: index,
+        discoveredAt: "2026-07-16T00:00:00.000Z",
+        metadata: { list: {}, detail: {}, unknownFields: {} },
+        pdf: { state: "no_pdf" as const, reason: "not_advertised" as const },
+      }));
+      await writeFile(
+        filePath,
+        `${documents.map((document) => JSON.stringify(document)).join("\n")}\n`,
+        "utf8",
+      );
+      const controller = new AbortController();
+      let visits = 0;
+      await expect(
+        scanDownloadDocuments(
+          new JsonlStore(filePath, scrapedDocumentSchema),
+          undefined,
+          () => {
+            visits += 1;
+            if (visits === 3) controller.abort(new Error("aborto sintético"));
+            return Promise.resolve(true);
+          },
+          controller.signal,
+        ),
+      ).rejects.toThrow("aborto sintético");
+      expect(visits).toBe(3);
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  it("enlaza retry-failed con el failureId exacto del estado actual del manifest", async () => {
+    const outputDir = await mkdtemp(path.join(tmpdir(), "pj-cli-retry-link-"));
+    try {
+      const documentId = "00000000-0000-4000-8000-000000000501";
+      const historicalFailureId = "00000000-0000-4000-8000-000000000601";
+      const currentFailureId = "00000000-0000-4000-8000-000000000602";
+      const failures = [
+        {
+          schemaVersion: 1,
+          failureId: historicalFailureId,
+          phase: "download",
+          documentId,
+          classification: "network",
+          attempts: 1,
+          retryable: true,
+          message: "histórico elegible",
+          resolution: "open",
+          occurredAt: "2026-07-16T00:00:00.000Z",
+        },
+        {
+          schemaVersion: 1,
+          failureId: currentFailureId,
+          phase: "download",
+          documentId,
+          classification: "rate_limit",
+          attempts: 2,
+          retryable: true,
+          message: "actual con espera",
+          nextRetryAt: "2026-07-17T00:00:00.000Z",
+          resolution: "open",
+          occurredAt: "2026-07-16T00:01:00.000Z",
+        },
+      ];
+      const failurePath = path.join(outputDir, "failures.jsonl");
+      await writeFile(
+        failurePath,
+        `${failures.map((failure) => JSON.stringify(failure)).join("\n")}\n`,
+        "utf8",
+      );
+      const store = new FailureStore(failurePath);
+      const states = new Map<string, CompactDownloadState>([
+        [documentId, { state: "failed", failureId: currentFailureId }],
+      ]);
+
+      const beforeCurrentIsDue = await store.retryEligibleFailureIds(
+        new Date("2026-07-16T12:00:00.000Z"),
+      );
+      expect(beforeCurrentIsDue).toEqual(new Set([historicalFailureId]));
+      expect(retryEligibleDocumentIds(states, beforeCurrentIsDue)).toEqual(new Set());
+
+      const afterCurrentIsDue = await store.retryEligibleFailureIds(
+        new Date("2026-07-17T01:00:00.000Z"),
+      );
+      expect(retryEligibleDocumentIds(states, afterCurrentIsDue)).toEqual(new Set([documentId]));
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
   });
 });
 
