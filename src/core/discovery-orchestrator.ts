@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { DownloadManifestStore } from "./download-manifest-store.js";
 import { CorpusMembershipStore } from "./corpus-membership-store.js";
 import { FailureStore } from "./failure-store.js";
+import { HttpRequestError } from "./http-errors.js";
 import {
   DiscoveryConfigurationError,
   DiscoveryStopError,
@@ -54,6 +55,7 @@ interface MutablePartitionSummary {
   newDocuments: number;
   newCorpusMemberships: number;
   globalDuplicates: number;
+  detailFailures: number;
   termination?: SuccessfulTermination;
 }
 
@@ -188,6 +190,18 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
             const membership = await this.#recordMembership(partitionId, record, storedDocument);
             if (membership) summary.newCorpusMemberships += 1;
             summary.globalDuplicates += 1;
+            await this.#failures.resolveOpenForDocument(
+              "detail",
+              storedDocument.documentId,
+              this.#now().toISOString(),
+            );
+            if (record.nativeId !== storedDocument.documentId) {
+              await this.#failures.resolveOpenForDocument(
+                "detail",
+                record.nativeId,
+                this.#now().toISOString(),
+              );
+            }
             await this.#persistence.confirmCheckpoint(
               this.#checkpoint(partitionId, page.parsed.pagination.currentPage, row + 1),
             );
@@ -203,8 +217,15 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
               ...(options.signal === undefined ? {} : { signal: options.signal }),
             });
           } catch (error: unknown) {
+            if (isInterruption(error, options.signal)) throw error;
+            const membership = await this.#recordMembership(partitionId, record);
+            if (membership) summary.newCorpusMemberships += 1;
             await this.#recordDetailFailure(record.nativeId, partitionId, page, error);
-            throw error;
+            summary.detailFailures += 1;
+            await this.#persistence.confirmCheckpoint(
+              this.#checkpoint(partitionId, page.parsed.pagination.currentPage, row + 1),
+            );
+            continue;
           }
           validateDocument(document, record, page, row);
           const membership = await this.#recordMembership(partitionId, record, document);
@@ -221,6 +242,11 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
           } else {
             summary.globalDuplicates += 1;
           }
+          await this.#failures.resolveOpenForDocument(
+            "detail",
+            document.documentId,
+            this.#now().toISOString(),
+          );
         }
         firstPage = false;
 
@@ -311,7 +337,7 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
   async #recordMembership(
     partitionId: string,
     record: TRecord,
-    document: ScrapedDocument,
+    knownDocument?: ScrapedDocument,
   ): Promise<boolean> {
     const sourceIdentity = this.#source.membershipIdentity?.(record) ?? {
       documentUuid: record.nativeId,
@@ -322,7 +348,10 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
       partitionId,
       pass: this.#passNumber,
       membershipToken: record.nativeId,
-      identity: mergeCorpusIdentity(sourceIdentity, document),
+      identity:
+        knownDocument === undefined
+          ? sourceIdentity
+          : mergeCorpusIdentity(sourceIdentity, knownDocument),
       observedAt: this.#now().toISOString(),
     });
     return membership.newForPartition;
@@ -335,6 +364,7 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
     error: unknown,
   ): Promise<void> {
     const classification = classifyDetailFailure(error);
+    const httpError = error instanceof HttpRequestError ? error : undefined;
     const failure: ScrapeFailure = {
       schemaVersion: 1,
       failureId: this.#uuid(),
@@ -343,9 +373,18 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
       documentId,
       page: page.parsed.pagination.currentPage,
       classification,
-      attempts: 1,
-      retryable: classification === "network" || classification === "timeout",
+      attempts: httpError?.attempt ?? 1,
+      retryable:
+        httpError?.retryable ?? (classification === "network" || classification === "timeout"),
       message: `Detalle PJ incompleto (${errorName(error)})`,
+      ...(httpError?.status === undefined ? {} : { status: httpError.status }),
+      ...(httpError?.code === undefined ? {} : { code: httpError.code }),
+      ...(httpError?.retryAfterMs === undefined
+        ? {}
+        : {
+            retryAfterMs: httpError.retryAfterMs,
+            nextRetryAt: new Date(this.#now().getTime() + httpError.retryAfterMs).toISOString(),
+          }),
       resolution: "open",
       occurredAt: this.#now().toISOString(),
     };
@@ -388,11 +427,31 @@ function indexDocumentIdentities(
 }
 
 function classifyDetailFailure(error: unknown): ScrapeFailure["classification"] {
+  if (error instanceof HttpRequestError) {
+    if (error.classification === "rate_limit") return "rate_limit";
+    if (error.classification === "http_permanent") return "http_permanent";
+    if (error.classification === "timeout") return "timeout";
+    if (error.classification === "security") return "security";
+    if (error.classification === "access") return "access";
+    if (error.classification === "structural") return "structural";
+    if (error.classification === "invalid_content") return "invalid_content";
+    if (error.classification === "interrupted") return "interrupted";
+    return "network";
+  }
   if (error instanceof DiscoveryStopError && error.reason === "interrupted") return "interrupted";
   if (error instanceof Error && "code" in error && error.code === "PJ_STRUCTURAL_CHANGE")
     return "structural";
   if (error instanceof Error && error.name === "AbortError") return "interrupted";
   return "network";
+}
+
+function isInterruption(error: unknown, signal: AbortSignal | undefined): boolean {
+  return (
+    signal?.aborted === true ||
+    (error instanceof DiscoveryStopError && error.reason === "interrupted") ||
+    (error instanceof HttpRequestError && error.classification === "interrupted") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
 }
 
 function errorName(error: unknown): string {
@@ -433,6 +492,7 @@ function newPartitionSummary(partitionId: string, page: DiscoveryPage): MutableP
     newDocuments: 0,
     newCorpusMemberships: 0,
     globalDuplicates: 0,
+    detailFailures: 0,
   };
 }
 
@@ -513,18 +573,23 @@ function finalSummary(
   const rawMemberships = partitions.reduce((sum, item) => sum + item.rawMemberships, 0);
   const uniqueDocuments = partitions.reduce((sum, item) => sum + item.newDocuments, 0);
   const duplicates = partitions.reduce((sum, item) => sum + item.globalDuplicates, 0);
+  const detailFailures = partitions.reduce((sum, item) => sum + item.detailFailures, 0);
+  const completeWithoutDetailFailures = datasetComplete && detailFailures === 0;
   return {
     termination,
-    datasetComplete,
-    corpusGate: datasetComplete ? "pass" : "blocked",
+    datasetComplete: completeWithoutDetailFailures,
+    corpusGate: completeWithoutDetailFailures ? "pass" : "blocked",
     pagesVisited: partitions.reduce((sum, item) => sum + item.pagesVisited, 0),
     rawMemberships,
     uniqueDocuments,
     duplicates,
+    detailFailures,
     partitions,
     diagnostics:
-      termination === "natural_end" && !datasetComplete
-        ? ["G3 bloqueado: la reconciliación de corpus de fase 0.1 no está en PASS"]
+      termination === "natural_end" && !completeWithoutDetailFailures
+        ? detailFailures > 0
+          ? [`G3 bloqueado: ${String(detailFailures)} detalles no pudieron enriquecerse`]
+          : ["G3 bloqueado: la reconciliación de corpus de fase 0.1 no está en PASS"]
         : [],
   };
 }

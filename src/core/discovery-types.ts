@@ -78,6 +78,7 @@ export interface PartitionDiscoverySummary {
   newDocuments: number;
   newCorpusMemberships: number;
   globalDuplicates: number;
+  detailFailures: number;
   termination: SuccessfulTermination;
 }
 
@@ -89,6 +90,7 @@ export interface DiscoverySummary {
   rawMemberships: number;
   uniqueDocuments: number;
   duplicates: number;
+  detailFailures: number;
   partitions: PartitionDiscoverySummary[];
   diagnostics: string[];
 }

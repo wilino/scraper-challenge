@@ -95,7 +95,7 @@ function discoveryOperationSummary(
     },
     durationMs: duration(startedAt),
     stopReason: result.termination,
-    definitiveFailures: 0,
+    definitiveFailures: result.detailFailures,
     corpusReconciled: result.datasetComplete,
   };
 }

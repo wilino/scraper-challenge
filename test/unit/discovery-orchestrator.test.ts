@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { DiscoveryOrchestrator } from "../../src/core/discovery-orchestrator.js";
+import { HttpRequestError } from "../../src/core/http-errors.js";
 import {
   DiscoveryStopError,
   type DiscoveryPage,
@@ -425,11 +426,33 @@ describe("orquestador de descubrimiento", () => {
     });
   });
 
-  it("persiste un fallo de detalle sin confirmar el documento", async () => {
+  it("confirma un fallo individual, continúa y lo recupera en una pasada futura", async () => {
     const root = await output();
-    const source = new FakeSource({ supreme: [page("supreme", 1, 1, 1, [record(1, 0)])] });
-    source.enrichRecord = () => Promise.reject(new Error("respuesta sensible no debe persistirse"));
-    await expect(orchestrator(source, root).run()).rejects.toThrow("respuesta sensible");
+    const pages = {
+      supreme: [page("supreme", 1, 1, 2, [record(1, 0), record(2, 1)])],
+    };
+    const firstSource = new FakeSource(pages);
+    const enrich = firstSource.enrichRecord.bind(firstSource);
+    firstSource.enrichRecord = (item, context) =>
+      item.nativeId === uuid(1)
+        ? Promise.reject(
+            new HttpRequestError("respuesta sensible no debe persistirse", {
+              classification: "http_transient",
+              retryable: true,
+              safePath: "/resultado.xhtml",
+              attempt: 4,
+              status: 500,
+            }),
+          )
+        : enrich(item, context);
+
+    const first = await orchestrator(firstSource, root).run();
+    expect(first).toMatchObject({
+      termination: "natural_end",
+      datasetComplete: false,
+      detailFailures: 1,
+      uniqueDocuments: 1,
+    });
     const failure = scrapeFailureSchema.parse(
       JSON.parse((await readFile(path.join(root, "data/failures.jsonl"), "utf8")).trim()),
     );
@@ -437,11 +460,69 @@ describe("orquestador de descubrimiento", () => {
       phase: "detail",
       documentId: uuid(1),
       classification: "network",
+      attempts: 4,
+      status: 500,
+      retryable: true,
       resolution: "open",
     });
     expect(failure.message).not.toContain("sensible");
-    await expect(readFile(path.join(root, "state/checkpoint.json"), "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
+    expect(
+      JSON.parse(await readFile(path.join(root, "state/checkpoint.json"), "utf8")),
+    ).toMatchObject({
+      page: 1,
+      confirmedRow: 2,
     });
+    const firstDocuments = (await readFile(path.join(root, "data/documents.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { documentId: string });
+    expect(firstDocuments.map(({ documentId }) => documentId)).toEqual([uuid(2)]);
+    expect(
+      (await readFile(path.join(root, "data/download-manifest.jsonl"), "utf8")).trim().split("\n"),
+    ).toHaveLength(1);
+
+    const secondSource = new FakeSource(pages);
+    const second = await orchestrator(secondSource, root, ["supreme"], 2).run();
+    expect(second).toMatchObject({ detailFailures: 0, uniqueDocuments: 1 });
+    expect(secondSource.enriched).toBe(1);
+    expect(
+      (await readFile(path.join(root, "data/documents.jsonl"), "utf8")).trim().split("\n"),
+    ).toHaveLength(2);
+    expect(
+      (await readFile(path.join(root, "data/download-manifest.jsonl"), "utf8")).trim().split("\n"),
+    ).toHaveLength(2);
+    const failureHistory = (await readFile(path.join(root, "data/failures.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => scrapeFailureSchema.parse(JSON.parse(line)));
+    const currentFailures = new Map(
+      failureHistory.map((candidate) => [candidate.failureId, candidate]),
+    );
+    expect(
+      [...currentFailures.values()].filter(
+        (candidate) => candidate.phase === "detail" && candidate.resolution === "open",
+      ),
+    ).toHaveLength(0);
+    expect(failureHistory.at(-1)).toMatchObject({
+      failureId: failure.failureId,
+      resolution: "resolved",
+      resolvedAt: "2026-07-16T00:00:00.000Z",
+    });
+    const memberships = (await readFile(path.join(root, "data/corpus-memberships.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { pass: number; membershipToken: string });
+    expect(memberships).toHaveLength(4);
+    expect(
+      new Set(memberships.map(({ pass, membershipToken }) => `${String(pass)}:${membershipToken}`))
+        .size,
+    ).toBe(4);
+
+    const repeatedSource = new FakeSource(pages);
+    await orchestrator(repeatedSource, root, ["supreme"], 2).run();
+    expect(repeatedSource.enriched).toBe(0);
+    expect(
+      (await readFile(path.join(root, "data/corpus-memberships.jsonl"), "utf8")).trim().split("\n"),
+    ).toHaveLength(4);
   });
 });
