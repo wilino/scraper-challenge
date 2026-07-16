@@ -9,6 +9,12 @@
       "viewState": "FIXTURE_VIEWSTATE_0"
     },
     {
+      "path": "live-search-submits.html",
+      "origin": "captured-structure-synthetic-content",
+      "viewState": "FIXTURE_VIEWSTATE_LIVE_SUBMITS",
+      "variant": "two-search-submits-with-incidental-sort-value"
+    },
+    {
       "path": "search-page-1.html",
       "origin": "captured-structure-synthetic-content",
       "viewState": "FIXTURE_VIEWSTATE_1",

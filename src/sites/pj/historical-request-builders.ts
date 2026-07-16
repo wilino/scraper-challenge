@@ -1,6 +1,7 @@
 import { load } from "cheerio";
 
 import type { OrderedPairs } from "../../models/http-request.js";
+import { HISTORICAL_CORPUS_SEARCH } from "./corpus-plan.js";
 
 export const HISTORICAL_FORM_ID = "formBusqueda";
 export const HISTORICAL_SEARCH_PATH =
@@ -51,9 +52,9 @@ export function historicalSearchPayload(
   replaceOrAppend(payload, HISTORICAL_FORM_ID, HISTORICAL_FORM_ID);
   replaceOrAppend(payload, `${HISTORICAL_FORM_ID}:txtBusqueda`, "");
   const fixed = [
-    ["cmbCorte", "2"],
-    ["cmbInstancia", "2"],
-    ["cmbEspecialidad", "2"],
+    ["cmbCorte", String(HISTORICAL_CORPUS_SEARCH.court)],
+    ["cmbInstancia", String(HISTORICAL_CORPUS_SEARCH.instance)],
+    ["cmbEspecialidad", String(HISTORICAL_CORPUS_SEARCH.specialty)],
   ] as const;
   for (const [suffix, value] of fixed) {
     replaceOrAppend(payload, `${HISTORICAL_FORM_ID}:${suffix}`, value);
@@ -62,7 +63,7 @@ export function historicalSearchPayload(
       replaceOrAppend(payload, `${HISTORICAL_FORM_ID}:${suffix}Input`, label);
     }
   }
-  replaceOrAppend(payload, `${HISTORICAL_FORM_ID}:buAnio`, "");
+  replaceOrAppend(payload, `${HISTORICAL_FORM_ID}:buAnio`, HISTORICAL_CORPUS_SEARCH.year);
   const yearLabel = $(`[name="${HISTORICAL_FORM_ID}:buAnioInput"]`).attr("value");
   if (yearLabel !== undefined) {
     replaceOrAppend(payload, `${HISTORICAL_FORM_ID}:buAnioInput`, yearLabel);

@@ -17,11 +17,17 @@ export class PjCorpusDiscoverySource implements DiscoverySource<PjCorpusRecord> 
   constructor(
     private readonly main: PjDiscoverySource,
     private readonly historical: PjHistoricalDiscoverySource,
+    private readonly partitionIds?: readonly string[],
   ) {}
 
   async preflight(signal?: AbortSignal): Promise<void> {
-    await this.main.preflight(signal);
-    await this.historical.preflight(signal);
+    const includesMain =
+      this.partitionIds === undefined ||
+      this.partitionIds.some((partitionId) => partitionId !== HISTORICAL_PARTITION);
+    const includesHistorical =
+      this.partitionIds === undefined || this.partitionIds.includes(HISTORICAL_PARTITION);
+    if (includesMain) await this.main.preflight(signal);
+    if (includesHistorical) await this.historical.preflight(signal);
   }
 
   openPartition(

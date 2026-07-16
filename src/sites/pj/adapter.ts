@@ -70,14 +70,6 @@ function pageResponseMismatch(
   return undefined;
 }
 
-function isRecoverableDetailSessionFailure(error: unknown): error is HttpRequestError {
-  return (
-    error instanceof HttpRequestError &&
-    error.classification === "http_transient" &&
-    error.status === 500
-  );
-}
-
 function isInterruption(error: unknown, signal?: AbortSignal): boolean {
   return (
     signal?.aborted === true ||
@@ -174,52 +166,7 @@ export class PjAdapter {
 
   async fetchDetail(record: PjListRecord, signal?: AbortSignal): Promise<CompletePjRecord> {
     const page = this.currentResults.pagination.currentPage;
-    try {
-      return await this.#fetchDetailOnce(record, page, signal);
-    } catch (firstError: unknown) {
-      if (isInterruption(firstError, signal)) throw firstError;
-      let restoredInvalidState = false;
-      if (!this.#isReadyAtPage(page)) {
-        await this.#restorePageOrThrow(page, firstError, signal);
-        restoredInvalidState = true;
-      }
-      if (!isRecoverableDetailSessionFailure(firstError)) throw firstError;
-
-      this.#logger.warn(
-        {
-          documentId: record.nativeId,
-          page,
-          classification: firstError.classification,
-          status: firstError.status,
-          attempt: firstError.attempt,
-        },
-        "Detalle PJ agotó sus reintentos; reconstruyendo la sesión antes de reintentarlo una vez",
-      );
-      if (!restoredInvalidState) await this.#restorePageOrThrow(page, firstError, signal);
-
-      try {
-        return await this.#fetchDetailOnce(record, page, signal);
-      } catch (secondError: unknown) {
-        if (isInterruption(secondError, signal)) throw secondError;
-        if (!this.#isReadyAtPage(page) || isRecoverableDetailSessionFailure(secondError)) {
-          await this.#restorePageOrThrow(page, secondError, signal);
-        }
-        if (!isRecoverableDetailSessionFailure(secondError)) throw secondError;
-        this.#logger.warn(
-          {
-            documentId: record.nativeId,
-            page,
-            firstClassification: firstError.classification,
-            firstStatus: firstError.status,
-            secondErrorName: secondError instanceof Error ? secondError.name : "Error",
-            secondClassification:
-              secondError instanceof HttpRequestError ? secondError.classification : "unknown",
-          },
-          "El detalle PJ falló tras una única recuperación acotada",
-        );
-        throw secondError;
-      }
-    }
+    return await this.#fetchDetailOnce(record, page, signal);
   }
 
   async #fetchDetailOnce(
@@ -307,10 +254,14 @@ export class PjAdapter {
           ...(documentId === undefined ? {} : { documentId }),
         };
       },
-      rebootstrap: async () => {
-        await this.#recoverToPage(page - (phase === "paginate" ? 1 : 0), signal);
+      restorePage: async (reason) => {
+        const restoreTarget = page - (phase === "paginate" ? 1 : 0);
+        this.#logger.warn(
+          { phase, page, restoreTarget, classification: reason.classification },
+          "Reconstruyendo la sesión JSF con presupuesto stateful acotado",
+        );
+        await this.#restorePageOrThrow(restoreTarget, reason, signal);
       },
-      maxRebootstraps: 1,
     });
   }
 

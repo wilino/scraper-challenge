@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -151,6 +151,79 @@ describe("persistencia append-only", () => {
     await expect(store.load()).rejects.toThrow(/reinicie explícitamente o migre/);
   });
 
+  it("persiste el checkpoint con permisos restrictivos y sin temporales residuales", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pj-checkpoint-durable-"));
+    const directoryPath = path.join(root, "state");
+    const filePath = path.join(directoryPath, "checkpoint.json");
+    const store = new CheckpointStore(filePath);
+
+    await store.save(checkpoint());
+
+    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+    expect((await readdir(directoryPath)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("no promueve silenciosamente un temporal válido tras una interrupción", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pj-checkpoint-interrupted-"));
+    const directoryPath = path.join(root, "state");
+    const filePath = path.join(directoryPath, "checkpoint.json");
+    const temporaryPath = `${filePath}.123.00000000-0000-4000-8000-000000000001.tmp`;
+    await mkdir(directoryPath);
+    await writeFile(temporaryPath, `${JSON.stringify(checkpoint())}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+
+    await expect(new CheckpointStore(filePath).load()).rejects.toThrow(
+      /temporal válido.*recupérelo explícitamente/,
+    );
+    await expect(readFile(filePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(temporaryPath, "utf8")).resolves.toContain('"schemaVersion":1');
+  });
+
+  it("diagnostica temporales múltiples o inválidos sin eliminarlos", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pj-checkpoint-ambiguous-"));
+    const directoryPath = path.join(root, "state");
+    const filePath = path.join(directoryPath, "checkpoint.json");
+    const valid = `${filePath}.123.00000000-0000-4000-8000-000000000001.tmp`;
+    const invalid = `${filePath}.124.00000000-0000-4000-8000-000000000002.tmp`;
+    await mkdir(directoryPath);
+    await writeFile(valid, JSON.stringify(checkpoint()), "utf8");
+    await writeFile(invalid, "contenido truncado", "utf8");
+
+    await expect(new CheckpointStore(filePath).load()).rejects.toThrow(
+      /temporales ambiguos o inválidos.*Revise o elimine/,
+    );
+    expect((await readdir(directoryPath)).filter((name) => name.endsWith(".tmp"))).toHaveLength(2);
+  });
+
+  it("prefiere el final válido y limpia temporales abandonados después del rename", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pj-checkpoint-final-wins-"));
+    const directoryPath = path.join(root, "state");
+    const filePath = path.join(directoryPath, "checkpoint.json");
+    const temporaryPath = `${filePath}.123.00000000-0000-4000-8000-000000000001.tmp`;
+    const store = new CheckpointStore(filePath);
+    await store.save(checkpoint(2));
+    await writeFile(temporaryPath, "contenido truncado", "utf8");
+
+    await expect(store.load()).resolves.toMatchObject({ page: 2 });
+    await expect(readFile(temporaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("mantiene un checkpoint íntegro ante escrituras concurrentes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pj-checkpoint-concurrent-"));
+    const directoryPath = path.join(root, "state");
+    const filePath = path.join(directoryPath, "checkpoint.json");
+    const store = new CheckpointStore(filePath);
+
+    await Promise.all(Array.from({ length: 12 }, (_, index) => store.save(checkpoint(index + 1))));
+
+    const loaded = await store.load();
+    expect(loaded?.page).toBeGreaterThanOrEqual(1);
+    expect(loaded?.page).toBeLessThanOrEqual(12);
+    expect((await readdir(directoryPath)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
   it("reanuda sin duplicar tres documentos y agrega un cuarto", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pj-resume-"));
     const first = new PagePersistence(root);
@@ -301,6 +374,46 @@ describe("persistencia append-only", () => {
     await expect(
       store.retryEligibleFailureIds(new Date("2026-07-16T02:00:00.000Z")),
     ).resolves.toEqual(new Set([first.failureId, second.failureId]));
+  });
+
+  it("reutiliza un único pendiente lógico detail al repetir una fila tras una caída", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pj-detail-ledger-"));
+    const filePath = path.join(root, "failures.jsonl");
+    const first: ScrapeFailure = {
+      schemaVersion: 1,
+      failureId: uuid(401),
+      phase: "detail",
+      partitionId: "supreme",
+      documentId: uuid(1),
+      page: 7,
+      classification: "network",
+      attempts: 3,
+      retryable: true,
+      message: "primer intento",
+      resolution: "open",
+      occurredAt: "2026-07-16T00:00:00.000Z",
+    };
+    const store = new FailureStore(filePath);
+    await store.upsertOpenForDocument(first);
+    await store.upsertOpenForDocument({
+      ...first,
+      failureId: uuid(402),
+      attempts: 2,
+      message: "replay de la misma fila",
+      occurredAt: "2026-07-16T00:01:00.000Z",
+    });
+
+    const history = (await store.readAll()).records;
+    expect(history).toHaveLength(2);
+    expect(new Set(history.map(({ failureId }) => failureId))).toEqual(new Set([first.failureId]));
+    expect(history.at(-1)).toMatchObject({
+      failureId: first.failureId,
+      message: "replay de la misma fila",
+      resolution: "open",
+    });
+    await expect(
+      store.resolveOpenForDocument("detail", uuid(1), "2026-07-16T00:02:00.000Z"),
+    ).resolves.toBe(1);
   });
 
   it("descarta del índice miles de fallos ya resueltos y conserva solo los abiertos", async () => {

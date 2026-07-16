@@ -6,12 +6,8 @@ import type {
 import { scrapedDocumentSchema, type ScrapedDocument } from "../../models/document.js";
 import type { CompletePjRecord } from "./adapter.js";
 import type { PjListRecord, PjParsedResults } from "./parser.js";
+import { corpusPartition } from "./corpus-plan.js";
 import type { PjCourt } from "./selectors.js";
-
-const PARTITION_COURTS: Readonly<Record<string, PjCourt>> = {
-  supreme: "supreme",
-  superior: "superior",
-};
 
 export interface PjDiscoveryAdapter {
   preflight(signal?: AbortSignal): Promise<void>;
@@ -53,15 +49,10 @@ export class PjDiscoverySource implements DiscoverySource<PjListRecord> {
     resumePage: number,
     signal?: AbortSignal,
   ): Promise<DiscoveryPage<PjListRecord>> {
-    const court = PARTITION_COURTS[partitionId];
-    if (court === undefined) throw new Error(`Partición PJ no soportada: ${partitionId}`);
+    const partition = corpusPartition(partitionId);
+    if (partition?.kind !== "main") throw new Error(`Partición PJ no soportada: ${partitionId}`);
     await this.adapter.bootstrap(signal);
-    let parsed = await this.adapter.search(
-      court === "supreme"
-        ? { court, query: "", mode: "specialized", includeAutoQualifiers: true }
-        : { court, query: "", mode: "general" },
-      signal,
-    );
+    let parsed = await this.adapter.search({ ...partition.search }, signal);
     if (resumePage > 1) {
       signal?.throwIfAborted();
       parsed = await this.adapter.goToPage(resumePage, signal);

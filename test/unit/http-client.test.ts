@@ -130,6 +130,92 @@ describe("cliente HTTP PJ", () => {
     expect(nock.isDone()).toBe(true);
   });
 
+  it("conserva múltiples Set-Cookie y aplica domain, path y secure", async () => {
+    const seen: (string | string[] | undefined)[] = [];
+    nock(origin)
+      .get(pathName)
+      .reply(200, "bootstrap", {
+        "Set-Cookie": [
+          "ROOT=uno; Path=/; Secure",
+          "SCOPED=dos; Path=/jurisprudenciaweb/faces/private; Secure",
+          "DOMAIN=tres; Domain=jurisprudencia.pj.gob.pe; Path=/; Secure",
+        ],
+      })
+      .get("/jurisprudenciaweb/faces/public.xhtml")
+      .reply(function replyPublic() {
+        seen.push(this.req.headers.cookie);
+        return [200, "public"];
+      })
+      .get("/jurisprudenciaweb/faces/private/detail.xhtml")
+      .reply(function replyPrivate() {
+        seen.push(this.req.headers.cookie);
+        return [200, "private"];
+      });
+    const http = client();
+
+    await http.request({ url: pathName, phase: "discover" });
+    await http.request({ url: "/jurisprudenciaweb/faces/public.xhtml", phase: "discover" });
+    await http.request({
+      url: "/jurisprudenciaweb/faces/private/detail.xhtml",
+      phase: "detail",
+    });
+
+    expect(seen[0]).toContain("ROOT=uno");
+    expect(seen[0]).toContain("DOMAIN=tres");
+    expect(seen[0]).not.toContain("SCOPED=dos");
+    expect(seen[1]).toContain("ROOT=uno");
+    expect(seen[1]).toContain("SCOPED=dos");
+    expect(seen[1]).toContain("DOMAIN=tres");
+    expect(await http.jar.getCookieString(`http://jurisprudencia.pj.gob.pe${pathName}`)).toBe("");
+  });
+
+  it("conserva la sesión adquirida durante un redirect same-origin", async () => {
+    nock(origin)
+      .get(pathName)
+      .reply(302, undefined, {
+        Location: "/jurisprudenciaweb/faces/page/resultado.xhtml",
+        "Set-Cookie": ["JSESSIONID=redirect; Path=/; Secure", "LOCALE=es; Path=/; Secure"],
+      })
+      .get("/jurisprudenciaweb/faces/page/resultado.xhtml")
+      .matchHeader("cookie", /(?=.*JSESSIONID=redirect)(?=.*LOCALE=es)/)
+      .reply(200, "ok");
+
+    expect((await client().request({ url: pathName, phase: "discover" })).data).toBe("ok");
+    expect(nock.isDone()).toBe(true);
+  });
+
+  it("omitSession no envía headers Cookie ni incorpora Set-Cookie al jar", async () => {
+    const received: (string | string[] | undefined)[] = [];
+    nock(origin)
+      .get(pdfPath)
+      .reply(function replyStateless() {
+        received.push(this.req.headers.cookie);
+        return [200, "%PDF", { "Set-Cookie": "LEAK=uno; Path=/; Secure" }];
+      })
+      .get(pathName)
+      .reply(function replyStateful() {
+        received.push(this.req.headers.cookie);
+        return [200, "ok"];
+      });
+    const http = client();
+    await http.jar.setCookie("JSESSIONID=operativa; Path=/; Secure", origin);
+
+    await http.request({
+      url: pdfPath,
+      phase: "download",
+      kind: "pdf",
+      omitSession: true,
+      headers: { Cookie: "FORZADA=no" },
+    });
+    expect(await http.jar.getCookieString(origin)).toContain("JSESSIONID=operativa");
+    expect(await http.jar.getCookieString(origin)).not.toContain("LEAK=uno");
+    await http.jar.removeAllCookies();
+    await http.request({ url: pathName, phase: "discover" });
+
+    expect(received).toEqual([undefined, undefined]);
+    expect(await http.jar.getCookieString(origin)).toBe("");
+  });
+
   it("bloquea otro origen antes de poder enviar cookies", async () => {
     const external = nock("https://example.com").get("/jurisprudenciaweb/x").reply(200, "no");
     const http = client();
@@ -217,6 +303,180 @@ describe("cliente HTTP PJ", () => {
     expect(response.data).toContain("panel");
     expect(response.attempts).toBe(2);
     expect(nock.isDone()).toBe(true);
+  });
+
+  it("acota 500 stateful a dos intentos, un restore y un intento posterior", async () => {
+    const clock = new ImmediateClock();
+    let viewState = "inicial";
+    let restores = 0;
+    const sentStates: string[] = [];
+    nock(origin)
+      .post("/jurisprudenciaweb/faces/page/resultado.xhtml")
+      .thrice()
+      .reply((_uri, body) => {
+        const rawState =
+          typeof body === "string"
+            ? new URLSearchParams(body).get("state")
+            : typeof body === "object"
+              ? (body as Record<string, unknown>).state
+              : undefined;
+        sentStates.push(typeof rawState === "string" ? rawState : "");
+        if (sentStates.length < 3) return [500, "backend temporalmente no disponible"];
+        return [
+          200,
+          '<partial-response><update id="panel">ok</update></partial-response>',
+          { "Content-Type": "text/xml" },
+        ];
+      });
+
+    const response = await client(clock, { maxRetries: 5 }).requestStateful({
+      buildRequest: () => ({
+        url: "/jurisprudenciaweb/faces/page/resultado.xhtml",
+        method: "POST",
+        phase: "detail",
+        body: new URLSearchParams({ state: viewState }).toString(),
+        expectedAjaxUpdate: 'id="panel"',
+      }),
+      restorePage: async () => {
+        restores += 1;
+        viewState = "restaurado";
+        await Promise.resolve();
+      },
+    });
+
+    expect(response.attempts).toBe(3);
+    expect(restores).toBe(1);
+    expect(sentStates).toEqual(["inicial", "inicial", "restaurado"]);
+    expect(clock.sleeps.filter((delay) => delay > 0)).toEqual([50]);
+  });
+
+  it("termina el presupuesto stateful persistente tras exactamente tres requests", async () => {
+    const clock = new ImmediateClock();
+    const scope = nock(origin)
+      .post("/jurisprudenciaweb/faces/page/resultado.xhtml")
+      .thrice()
+      .reply(500, "backend persistentemente no disponible");
+    let restores = 0;
+
+    await expect(
+      client(clock, { maxRetries: 5 }).requestStateful({
+        buildRequest: () => ({
+          url: "/jurisprudenciaweb/faces/page/resultado.xhtml",
+          method: "POST",
+          phase: "detail",
+        }),
+        restorePage: async () => {
+          restores += 1;
+          await Promise.resolve();
+        },
+      }),
+    ).rejects.toMatchObject({ classification: "http_transient", status: 500, attempt: 3 });
+    expect(scope.isDone()).toBe(true);
+    expect(restores).toBe(2);
+    expect(clock.sleeps.filter((delay) => delay > 0)).toEqual([50]);
+  });
+
+  it("conserva los retries stateful para 503 sin reconstruir una sesión sana", async () => {
+    const clock = new ImmediateClock();
+    nock(origin)
+      .post("/jurisprudenciaweb/faces/page/resultado.xhtml")
+      .reply(503, "ocupado")
+      .post("/jurisprudenciaweb/faces/page/resultado.xhtml")
+      .reply(200, '<partial-response><update id="panel">ok</update></partial-response>');
+    let restores = 0;
+
+    const response = await client(clock).requestStateful({
+      buildRequest: () => ({
+        url: "/jurisprudenciaweb/faces/page/resultado.xhtml",
+        method: "POST",
+        phase: "detail",
+        expectedAjaxUpdate: 'id="panel"',
+      }),
+      restorePage: async () => {
+        restores += 1;
+        await Promise.resolve();
+      },
+    });
+
+    expect(response.attempts).toBe(2);
+    expect(restores).toBe(0);
+    expect(clock.sleeps.filter((delay) => delay > 0)).toEqual([50]);
+  });
+
+  it("promueve a fatal un cleanup fallido tras agotar un transitorio stateful", async () => {
+    const cleanupFailure = new Error("restore falló");
+    nock(origin)
+      .post("/jurisprudenciaweb/faces/page/resultado.xhtml")
+      .twice()
+      .reply(503, "ocupado");
+
+    await expect(
+      client(new ImmediateClock(), { maxRetries: 1 }).requestStateful({
+        buildRequest: () => ({
+          url: "/jurisprudenciaweb/faces/page/resultado.xhtml",
+          method: "POST",
+          phase: "detail",
+        }),
+        restorePage: () => Promise.reject(cleanupFailure),
+      }),
+    ).rejects.toBe(cleanupFailure);
+  });
+
+  it("restaura inmediatamente un partial 200 inválido sin backoff", async () => {
+    const clock = new ImmediateClock();
+    let restores = 0;
+    nock(origin)
+      .post("/jurisprudenciaweb/faces/page/resultado.xhtml")
+      .reply(200, "<partial-response></partial-response>", { "Content-Type": "text/xml" })
+      .post("/jurisprudenciaweb/faces/page/resultado.xhtml")
+      .reply(200, '<partial-response><update id="panel">ok</update></partial-response>', {
+        "Content-Type": "text/xml",
+      });
+
+    const response = await client(clock).requestStateful({
+      buildRequest: () => ({
+        url: "/jurisprudenciaweb/faces/page/resultado.xhtml",
+        method: "POST",
+        phase: "detail",
+        expectedAjaxUpdate: 'id="panel"',
+      }),
+      restorePage: async () => {
+        restores += 1;
+        await Promise.resolve();
+      },
+    });
+
+    expect(response.attempts).toBe(2);
+    expect(restores).toBe(1);
+    expect(clock.sleeps.filter((delay) => delay > 0)).toEqual([]);
+  });
+
+  it("mantiene MAX_RETRIES y Retry-After para 429 stateful", async () => {
+    const clock = new ImmediateClock();
+    nock(origin)
+      .post("/jurisprudenciaweb/faces/page/resultado.xhtml")
+      .twice()
+      .reply(429, "límite", { "Retry-After": "2" })
+      .post("/jurisprudenciaweb/faces/page/resultado.xhtml")
+      .reply(200, '<partial-response><update id="panel">ok</update></partial-response>');
+    let restores = 0;
+
+    const response = await client(clock, { maxRetries: 2 }).requestStateful({
+      buildRequest: () => ({
+        url: "/jurisprudenciaweb/faces/page/resultado.xhtml",
+        method: "POST",
+        phase: "detail",
+        expectedAjaxUpdate: 'id="panel"',
+      }),
+      restorePage: async () => {
+        restores += 1;
+        await Promise.resolve();
+      },
+    });
+
+    expect(response.attempts).toBe(3);
+    expect(restores).toBe(0);
+    expect(clock.sleeps.filter((delay) => delay > 0)).toEqual([2000, 2000]);
   });
 
   it("clasifica como transitorio un 500 que agota los reintentos", async () => {
@@ -359,7 +619,7 @@ describe("cliente HTTP PJ", () => {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         expectedAjaxUpdate: 'id="panel"',
       }),
-      rebootstrap: async () => {
+      restorePage: async () => {
         viewState = "fresco";
         await Promise.resolve();
       },

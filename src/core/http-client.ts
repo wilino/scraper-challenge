@@ -7,7 +7,6 @@ import axios, {
   type Method,
   type RawAxiosHeaders,
 } from "axios";
-import { wrapper } from "axios-cookiejar-support";
 import type { Readable } from "node:stream";
 import type { Logger } from "pino";
 import { CookieJar } from "tough-cookie";
@@ -58,8 +57,7 @@ export interface ControlledResponse<T = string | Uint8Array | Readable> {
 
 export interface StatefulRequest<T = string | Uint8Array> {
   buildRequest: (attempt: number) => ControlledRequest;
-  rebootstrap: (reason: HttpRequestError) => Promise<void>;
-  maxRebootstraps?: number;
+  restorePage: (reason: HttpRequestError) => Promise<void>;
   transform?: (response: ControlledResponse) => T;
 }
 
@@ -69,7 +67,6 @@ export interface HttpClientDependencies {
   logger: Logger;
   jar?: CookieJar;
   axiosInstance?: AxiosInstance;
-  statelessAxiosInstance?: AxiosInstance;
 }
 
 interface ClassifiedResponse {
@@ -121,9 +118,9 @@ function abortError(signal: AbortSignal | undefined): unknown {
 
 export class PjHttpClient {
   private readonly axios: AxiosInstance;
-  private readonly statelessAxios: AxiosInstance;
   private readonly clock: Clock;
   private readonly retryPolicy: RetryPolicy;
+  private readonly statefulRetryPolicy: RetryPolicy;
   private readonly redirectPolicy: RedirectPolicy;
   private readonly cooldown: SharedHostCooldown;
   private readonly htmlLimiter: RateLimiter;
@@ -141,16 +138,6 @@ export class PjHttpClient {
     this.jar = dependencies.jar ?? new CookieJar();
     this.axios =
       dependencies.axiosInstance ??
-      wrapper(
-        axios.create({
-          jar: this.jar,
-          maxRedirects: 0,
-          validateStatus: () => true,
-          proxy: false,
-        }),
-      );
-    this.statelessAxios =
-      dependencies.statelessAxiosInstance ??
       axios.create({
         maxRedirects: 0,
         validateStatus: () => true,
@@ -158,6 +145,13 @@ export class PjHttpClient {
       });
     this.retryPolicy = new RetryPolicy({
       maxRetries: config.maxRetries,
+      backoffBaseMs: config.backoffBaseMs,
+      backoffMaxMs: config.backoffMaxMs,
+      random,
+      now: () => this.clock.now(),
+    });
+    this.statefulRetryPolicy = new RetryPolicy({
+      maxRetries: 1,
       backoffBaseMs: config.backoffBaseMs,
       backoffMaxMs: config.backoffMaxMs,
       random,
@@ -214,13 +208,7 @@ export class PjHttpClient {
   public async requestStateful<T = string | Uint8Array>(
     stateful: StatefulRequest<T>,
   ): Promise<ControlledResponse<T>> {
-    let rebootstraps = 0;
-    const response = await this.execute(stateful.buildRequest, async (reason) => {
-      const maxRebootstraps = stateful.maxRebootstraps ?? 1;
-      if (rebootstraps >= maxRebootstraps) throw reason;
-      rebootstraps += 1;
-      await stateful.rebootstrap(reason);
-    });
+    const response = await this.executeStateful(stateful);
     if (stateful.transform === undefined) return response as ControlledResponse<T>;
     return { ...response, data: stateful.transform(response) };
   }
@@ -288,7 +276,6 @@ export class PjHttpClient {
 
   private async execute(
     buildRequest: (attempt: number) => ControlledRequest,
-    rebootstrap?: (reason: HttpRequestError) => Promise<void>,
   ): Promise<ControlledResponse> {
     let attempt = 1;
     for (;;) {
@@ -301,8 +288,7 @@ export class PjHttpClient {
       if (!("error" in outcome)) return { ...outcome, attempts: attempt };
 
       if (outcome.error.requiresRebootstrap) {
-        if (rebootstrap === undefined) throw outcome.error;
-        await rebootstrap(outcome.error);
+        throw outcome.error;
       }
       const decision = this.retryPolicy.decide(
         attempt,
@@ -333,6 +319,105 @@ export class PjHttpClient {
       await this.clock.sleep(decision.delayMs, request.signal);
       attempt += 1;
     }
+  }
+
+  private async executeStateful(
+    stateful: Pick<StatefulRequest, "buildRequest" | "restorePage">,
+  ): Promise<ControlledResponse> {
+    let requestCount = 0;
+    let rateLimitFailures = 0;
+    let transientFailures = 0;
+    let nonEmpty500Failures = 0;
+    let restored = false;
+
+    for (;;) {
+      requestCount += 1;
+      const request = stateful.buildRequest(requestCount);
+      const outcome = await this.htmlLimiter.schedule(
+        async () => await this.attempt(request, requestCount),
+        request.signal,
+      );
+      if (!("error" in outcome)) return { ...outcome, attempts: requestCount };
+
+      const { error } = outcome;
+      if (error.classification === "rate_limit") {
+        rateLimitFailures += 1;
+        const decision = this.retryPolicy.decide(
+          rateLimitFailures,
+          error.retryable,
+          outcome.retryAfter,
+        );
+        const cooldownDelay = decision.retry
+          ? decision.delayMs
+          : (parseRetryAfter(outcome.retryAfter, this.clock.now()) ??
+            this.config.globalCooldownAfter429Ms);
+        this.cooldown.pauseFor(cooldownDelay);
+        if (!decision.retry) throw error;
+        this.recordRetry(request, error, decision.delayMs);
+        await this.clock.sleep(decision.delayMs, request.signal);
+        continue;
+      }
+
+      if (error.requiresRebootstrap) {
+        if (restored) {
+          await stateful.restorePage(error);
+          throw error;
+        }
+        await stateful.restorePage(error);
+        restored = true;
+        nonEmpty500Failures = 0;
+        continue;
+      }
+
+      if (error.classification === "http_transient" && error.status === 500 && !restored) {
+        nonEmpty500Failures += 1;
+        if (nonEmpty500Failures === 1) {
+          const decision = this.statefulRetryPolicy.decide(1, true, outcome.retryAfter);
+          this.recordRetry(request, error, decision.delayMs);
+          await this.clock.sleep(decision.delayMs, request.signal);
+          continue;
+        }
+        await stateful.restorePage(error);
+        restored = true;
+        continue;
+      }
+
+      if (error.retryable && !restored) {
+        transientFailures += 1;
+        const decision = this.retryPolicy.decide(
+          transientFailures,
+          error.retryable,
+          outcome.retryAfter,
+        );
+        if (decision.retry) {
+          this.recordRetry(request, error, decision.delayMs);
+          await this.clock.sleep(decision.delayMs, request.signal);
+          continue;
+        }
+        await stateful.restorePage(error);
+        throw error;
+      }
+
+      if (restored) await stateful.restorePage(error);
+
+      throw error;
+    }
+  }
+
+  private recordRetry(request: ControlledRequest, error: HttpRequestError, delayMs: number): void {
+    this.metrics.record({
+      phase: request.phase,
+      method: request.method ?? "GET",
+      safePath: error.safePath,
+      attempt: error.attempt,
+      durationMs: 0,
+      status: error.status,
+      code: error.code,
+      delayMs,
+      cause: error.classification,
+      page: request.page,
+      documentId: request.documentId,
+    });
   }
 
   private async attempt(
@@ -454,8 +539,7 @@ export class PjHttpClient {
       validateStatus: () => true,
     };
     try {
-      const transport = request.omitSession === true ? this.statelessAxios : this.axios;
-      const response = await transport.request(axiosConfig);
+      const response = await this.axios.request(axiosConfig);
       if (request.omitSession !== true) {
         const setCookies = AxiosHeaders.from(response.headers as RawAxiosHeaders).getSetCookie();
         for (const setCookie of setCookies) await this.jar.setCookie(setCookie, url.toString());

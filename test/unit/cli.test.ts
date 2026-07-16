@@ -41,8 +41,6 @@ const config: ScraperConfig = {
   backoffBaseMs: 1,
   backoffMaxMs: 1,
   globalCooldownAfter429Ms: 1,
-  maxPages: 10,
-  maxDocuments: 10,
   maxPdfBytes: 1024,
   maxHtmlBytes: 1024,
   htmlConcurrency: 1,
@@ -88,7 +86,7 @@ describe("argumentos CLI", () => {
     await expect(
       runCli(["download", "--help"], undefined, { config, writeOutput: output }),
     ).resolves.toBe(0);
-    expect(output).toHaveBeenNthCalledWith(1, expect.stringContaining("retry-failed"));
+    expect(output).toHaveBeenNthCalledWith(1, expect.stringContaining("retry-details"));
     expect(output).toHaveBeenNthCalledWith(2, expect.stringContaining("download"));
   });
 
@@ -112,6 +110,19 @@ describe("argumentos CLI", () => {
     });
   });
 
+  it("acepta un selector de partición únicamente para discover", () => {
+    expect(parseCliArguments(["discover", "--partition", "superior"])).toEqual({
+      command: "discover",
+      options: { resume: false, partitionId: "superior" },
+    });
+    expect(() => parseCliArguments(["download", "--partition", "supreme"])).toThrow(
+      /solo puede usarse con discover/,
+    );
+    expect(() => parseCliArguments(["discover", "--partition", "otra"])).toThrow(
+      /requiere supreme, superior o historical-arbitration-lima/,
+    );
+  });
+
   it.each([
     ["inexistente"],
     ["discover", "--limit", "0"],
@@ -119,6 +130,7 @@ describe("argumentos CLI", () => {
     ["discover", "--log-level", "trace"],
     ["download", "--resume"],
     ["retry-failed", "--max-pages", "2"],
+    ["retry-details", "--resume"],
     ["download", "--pass", "2"],
     ["download", "--extra"],
     ["discover", "--resume", "--resume"],
@@ -128,7 +140,7 @@ describe("argumentos CLI", () => {
 });
 
 describe("delegación y resumen CLI", () => {
-  it.each(["discover", "download", "retry-failed"] as const)(
+  it.each(["discover", "download", "retry-failed", "retry-details"] as const)(
     "delega %s con opciones, configuración y señal",
     async (command) => {
       const handler = vi.fn<CommandHandler>(() => Promise.resolve(summary({ command })));
@@ -174,6 +186,7 @@ describe("delegación y resumen CLI", () => {
       discover: vi.fn(() => Promise.resolve(summary())),
       download: vi.fn(() => Promise.resolve(summary({ command: "download" }))),
       retryFailed: vi.fn(() => Promise.resolve(summary({ command: "retry-failed" }))),
+      retryDetails: vi.fn(() => Promise.resolve(summary({ command: "retry-details" }))),
       close: vi.fn(() => Promise.resolve()),
     };
     const handler = createCommandHandler(operations);
@@ -181,10 +194,12 @@ describe("delegación y resumen CLI", () => {
     await handler({ command: "discover", options: { resume: false } }, context);
     await handler({ command: "download", options: { resume: false } }, context);
     await handler({ command: "retry-failed", options: { resume: false } }, context);
+    await handler({ command: "retry-details", options: { resume: false } }, context);
     expect(operations.discover).toHaveBeenCalledOnce();
     expect(operations.download).toHaveBeenCalledOnce();
     expect(operations.retryFailed).toHaveBeenCalledOnce();
-    expect(operations.close).toHaveBeenCalledTimes(3);
+    expect(operations.retryDetails).toHaveBeenCalledOnce();
+    expect(operations.close).toHaveBeenCalledTimes(4);
   });
 
   it("download real no inicia discover implícitamente si falta documents.jsonl", async () => {

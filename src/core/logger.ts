@@ -60,5 +60,5 @@ export function createLogger({
       },
     },
   };
-  return destination === undefined ? pino(options) : pino(options, destination);
+  return pino(options, destination ?? pino.destination({ dest: 2, sync: true }));
 }

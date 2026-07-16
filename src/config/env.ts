@@ -6,6 +6,10 @@ import { z } from "zod";
 import { ALLOWED_SCRAPER_ORIGINS, DEFAULT_ENV } from "./defaults.js";
 
 const positiveInteger = z.coerce.number().int().positive();
+const serialConcurrency = z.coerce
+  .number()
+  .int()
+  .refine((value) => value === 1, { message: "debe ser 1 mientras no exista aislamiento R6" });
 const logLevel = z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]);
 
 const schema = z
@@ -23,12 +27,10 @@ const schema = z
     BACKOFF_BASE_MS: positiveInteger.default(DEFAULT_ENV.BACKOFF_BASE_MS),
     BACKOFF_MAX_MS: positiveInteger.default(DEFAULT_ENV.BACKOFF_MAX_MS),
     GLOBAL_COOLDOWN_AFTER_429_MS: positiveInteger.default(DEFAULT_ENV.GLOBAL_COOLDOWN_AFTER_429_MS),
-    MAX_PAGES: positiveInteger.default(DEFAULT_ENV.MAX_PAGES),
-    MAX_DOCUMENTS: positiveInteger.default(DEFAULT_ENV.MAX_DOCUMENTS),
     MAX_PDF_BYTES: positiveInteger.default(DEFAULT_ENV.MAX_PDF_BYTES),
     MAX_HTML_BYTES: positiveInteger.default(DEFAULT_ENV.MAX_HTML_BYTES),
-    HTML_CONCURRENCY: positiveInteger.default(DEFAULT_ENV.HTML_CONCURRENCY),
-    PDF_CONCURRENCY: positiveInteger.default(DEFAULT_ENV.PDF_CONCURRENCY),
+    HTML_CONCURRENCY: serialConcurrency.default(DEFAULT_ENV.HTML_CONCURRENCY),
+    PDF_CONCURRENCY: serialConcurrency.default(DEFAULT_ENV.PDF_CONCURRENCY),
     USER_AGENT: z.string().min(1).default(DEFAULT_ENV.USER_AGENT),
     LOG_LEVEL: logLevel.default(DEFAULT_ENV.LOG_LEVEL),
   })
@@ -79,8 +81,6 @@ export interface ScraperConfig {
   backoffBaseMs: number;
   backoffMaxMs: number;
   globalCooldownAfter429Ms: number;
-  maxPages: number;
-  maxDocuments: number;
   maxPdfBytes: number;
   maxHtmlBytes: number;
   htmlConcurrency: number;
@@ -140,8 +140,6 @@ export function loadConfig(
     backoffBaseMs: value.BACKOFF_BASE_MS,
     backoffMaxMs: value.BACKOFF_MAX_MS,
     globalCooldownAfter429Ms: value.GLOBAL_COOLDOWN_AFTER_429_MS,
-    maxPages: value.MAX_PAGES,
-    maxDocuments: value.MAX_DOCUMENTS,
     maxPdfBytes: value.MAX_PDF_BYTES,
     maxHtmlBytes: value.MAX_HTML_BYTES,
     htmlConcurrency: value.HTML_CONCURRENCY,

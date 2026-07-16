@@ -428,6 +428,25 @@ describe("orquestador de descubrimiento", () => {
       `${JSON.stringify(persisted)}\n`,
       "utf8",
     );
+    const pendingFailure = {
+      schemaVersion: 1 as const,
+      failureId: uuid(701),
+      phase: "detail" as const,
+      partitionId: "supreme",
+      documentId: persisted.documentId,
+      page: 1,
+      classification: "network" as const,
+      attempts: 3,
+      retryable: true,
+      message: "detalle persistido antes de la caída",
+      resolution: "open" as const,
+      occurredAt: "2026-07-16T00:00:00.000Z",
+    };
+    await writeFile(
+      path.join(root, "data/failures.jsonl"),
+      `${JSON.stringify(pendingFailure)}\n`,
+      "utf8",
+    );
     const source = new FakeSource({ supreme: [page("supreme", 1, 1, 1, [record(1, 0)])] });
     const summary = await orchestrator(source, root).run();
     expect(summary).toMatchObject({ uniqueDocuments: 0, duplicates: 1 });
@@ -438,6 +457,18 @@ describe("orquestador de descubrimiento", () => {
     expect(
       (await readFile(path.join(root, "data/download-manifest.jsonl"), "utf8")).trim().split("\n"),
     ).toHaveLength(1);
+    const failureHistory = (await readFile(path.join(root, "data/failures.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => scrapeFailureSchema.parse(JSON.parse(line)));
+    expect(failureHistory).toHaveLength(2);
+    expect(failureHistory.at(-1)).toMatchObject({
+      failureId: pendingFailure.failureId,
+      resolution: "resolved",
+    });
+    expect(
+      JSON.parse(await readFile(path.join(root, "state/checkpoint.json"), "utf8")),
+    ).toMatchObject({ page: 1, confirmedRow: 1 });
   });
 
   it("mantiene G3 bloqueado aunque todas las particiones terminen naturalmente", async () => {

@@ -7,5 +7,6 @@ coverage/
 *.part
 *.log
 .DS_Store
-output/*
-!output/.gitkeep
+.Willy/
+output/
+summary.json

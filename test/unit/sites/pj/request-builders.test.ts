@@ -6,8 +6,8 @@ import {
   buildDetailPayload,
   buildPagePayload,
   buildSearchPayload,
-  buildUniverseSearchPayload,
   encodePayload,
+  fingerprintPayload,
 } from "../../../../src/sites/pj/request-builders.js";
 import { parseResultsPage } from "../../../../src/sites/pj/parser.js";
 
@@ -19,12 +19,77 @@ const requestFixture = async (name: string): Promise<string> =>
   ).trim();
 
 describe("request builders PJ", () => {
-  it("reproduce en orden el payload capturado de búsqueda", async () => {
-    const payload = buildSearchPayload(await fixture("initial.html"), {
-      court: "supreme",
-      query: "derecho",
-    });
-    expect(encodePayload(payload)).toBe(await requestFixture("search-page-1.urlencoded"));
+  it("clasifica la variante viva por semántica aunque ambos submits contengan 21", async () => {
+    const html = await fixture("live-search-submits.html");
+    const specialized = buildSearchPayload(html, { court: "supreme", mode: "specialized" });
+    const general = buildSearchPayload(html, { court: "superior", mode: "general" });
+
+    expect(specialized).toContainEqual(["formBuscador:j_idt31", "formBuscador:j_idt31"]);
+    expect(specialized).toContainEqual(["busqueda", "especializada"]);
+    expect(general).toContainEqual(["formBuscador:j_idt69", "formBuscador:j_idt69"]);
+    expect(general).toContainEqual(["formBuscador:j_idt71", "21"]);
+  });
+
+  it("falla cerrado ante declaraciones semánticas o fallbacks ambiguos", () => {
+    const form = (submits: string) => `<form id="formBuscador">
+      <input name="javax.faces.ViewState" value="STATE" />
+      <input name="formBuscador:tabpanel-value" value="general" />
+      <input name="formBuscador:txtBusqueda" value="" />
+      <input name="formBuscador:buCorte" value="1" />${submits}</form>`;
+    const submit = (name: string, extra: string) => `<input type="image" name="${name}"
+      onclick="mojarra.jsfcljs(document.getElementById('formBuscador'),{'${name}':'${name}','forward':'buscar',${extra}},'')" />`;
+
+    expect(() =>
+      buildSearchPayload(
+        form(
+          submit("formBuscador:a", "'busqueda':'especializada'") +
+            submit("formBuscador:b", "'busqueda':'especializada'"),
+        ),
+        { court: "supreme", mode: "specialized" },
+      ),
+    ).toThrow(/specialized ambiguo/);
+    expect(() =>
+      buildSearchPayload(
+        form(
+          submit("formBuscador:a", "'formBuscador:j_idt34':'21'") +
+            submit("formBuscador:b", "'formBuscador:j_idt34':'21'"),
+        ),
+        { court: "supreme", mode: "specialized" },
+      ),
+    ).toThrow(/fallback specialized ambiguo/);
+  });
+
+  it("usa el fallback legado exacto solo cuando produce una asignación única", () => {
+    const html = `<form id="formBuscador">
+      <input name="javax.faces.ViewState" value="STATE" />
+      <input name="formBuscador:tabpanel-value" value="general" />
+      <input name="formBuscador:txtBusqueda" value="" />
+      <input name="formBuscador:buCorte" value="1" />
+      <input type="image" name="formBuscador:j_idt31"
+        onclick="mojarra.jsfcljs(document.getElementById('formBuscador'),{'formBuscador:j_idt31':'formBuscador:j_idt31','forward':'buscar','formBuscador:j_idt34':'21'},'')" />
+      <input type="image" name="formBuscador:j_idt69"
+        onclick="mojarra.jsfcljs(document.getElementById('formBuscador'),{'formBuscador:j_idt69':'formBuscador:j_idt69','forward':'buscar','formBuscador:j_idt71':'21'},'')" />
+    </form>`;
+
+    expect(buildSearchPayload(html, { court: "supreme", mode: "specialized" })).toContainEqual([
+      "formBuscador:j_idt31",
+      "formBuscador:j_idt31",
+    ]);
+    expect(buildSearchPayload(html, { court: "superior", mode: "general" })).toContainEqual([
+      "formBuscador:j_idt69",
+      "formBuscador:j_idt69",
+    ]);
+  });
+
+  it("rechaza usar el submit especializado capturado como si fuera general", async () => {
+    const html = await fixture("initial.html");
+    expect(() =>
+      buildSearchPayload(html, {
+        court: "supreme",
+        query: "derecho",
+        mode: "general",
+      }),
+    ).toThrow(/submit general no identificado por rol/);
   });
 
   it("descubre parámetros Mojarra aunque RichFaces escape las comillas", () => {
@@ -45,16 +110,39 @@ describe("request builders PJ", () => {
     ]);
   });
 
-  it("construye la búsqueda Suprema avanzada con auto calificatorios observados", () => {
-    const html = `<form id="formBuscador" method="post">
+  it("falla cerrado si falta autos o el submit especializado no tiene rol", () => {
+    const base = `<form id="formBuscador" method="post">
       <input name="javax.faces.ViewState" value="STATE" />
       <input name="formBuscador:tabpanel-value" value="general" />
       <input name="formBuscador:txtBusqueda" value="" />
       <input name="formBuscador:buCorte" value="1" />
       <input type="image" name="formBuscador:j_idt31"
         onclick="mojarra.jsfcljs(document.getElementById('formBuscador'),{'formBuscador:j_idt31':'formBuscador:j_idt31','forward':'buscar'},'')" />
+    </form>`;
+
+    expect(() => buildSearchPayload(base, { court: "supreme", mode: "specialized" })).toThrow(
+      /submit specialized no identificado por rol/,
+    );
+    expect(() =>
+      buildSearchPayload(base, {
+        court: "supreme",
+        mode: "general",
+        includeAutoQualifiers: true,
+      }),
+    ).toThrow(/control de autos ausente/);
+  });
+
+  it("construye la búsqueda Suprema avanzada con auto calificatorios observados", () => {
+    const html = `<form id="formBuscador" method="post">
+      <input name="javax.faces.ViewState" value="STATE" />
+      <input name="formBuscador:tabpanel-value" value="general" />
+      <input name="formBuscador:txtBusqueda" value="" />
+      <input name="formBuscador:buCorte" value="1" />
+      <input type="checkbox" name="formBuscador:varAutos2" />
+      <input type="image" name="formBuscador:j_idt31"
+        onclick="mojarra.jsfcljs(document.getElementById('formBuscador'),{'formBuscador:j_idt31':'formBuscador:j_idt31','forward':'buscar'},'')" />
       <input type="image" name="formBuscador:j_idt69"
-        onclick="mojarra.jsfcljs(document.getElementById('formBuscador'),{\\'formBuscador:j_idt69\\':\\'formBuscador:j_idt69\\',\\'forward\\':\\'buscar\\',\\'formBuscador:j_idt71\\':\\'21\\'},\\'\\')" />
+        onclick="mojarra.jsfcljs(document.getElementById('formBuscador'),{\\'formBuscador:j_idt69\\':\\'formBuscador:j_idt69\\',\\'forward\\':\\'buscar\\',\\'busqueda\\':\\'especializada\\',\\'formBuscador:j_idt71\\':\\'21\\'},\\'\\')" />
     </form>`;
 
     expect(
@@ -71,7 +159,39 @@ describe("request builders PJ", () => {
       ["formBuscador:varAutos2", "on"],
       ["formBuscador:j_idt69", "formBuscador:j_idt69"],
       ["forward", "buscar"],
+      ["busqueda", "especializada"],
       ["formBuscador:j_idt71", "21"],
+    ]);
+    expect(
+      fingerprintPayload(
+        buildSearchPayload(html, {
+          court: "supreme",
+          mode: "specialized",
+          includeAutoQualifiers: true,
+        }),
+      ),
+    ).toBe("841ef6e0825a8bce6f732e01badb23326103e1b19bade7f712b4c087685e5566");
+  });
+
+  it("descubre roles de submit aunque el DOM invierta su orden", () => {
+    const html = `<form id="formBuscador" method="post">
+      <input name="javax.faces.ViewState" value="STATE" />
+      <input name="formBuscador:tabpanel-value" value="general" />
+      <input name="formBuscador:txtBusqueda" value="" />
+      <input name="formBuscador:buCorte" value="1" />
+      <input type="image" name="formBuscador:j_idt69"
+        onclick="mojarra.jsfcljs(document.getElementById('formBuscador'),{'formBuscador:j_idt69':'formBuscador:j_idt69','forward':'buscar','busqueda':'especializada','formBuscador:j_idt71':'21'},'')" />
+      <input type="image" name="formBuscador:j_idt31"
+        onclick="mojarra.jsfcljs(document.getElementById('formBuscador'),{'formBuscador:j_idt31':'formBuscador:j_idt31','forward':'buscar','busqueda':'general'},'')" />
+    </form>`;
+
+    expect(buildSearchPayload(html, { court: "superior", mode: "general" })).toContainEqual([
+      "formBuscador:j_idt31",
+      "formBuscador:j_idt31",
+    ]);
+    expect(buildSearchPayload(html, { court: "supreme", mode: "specialized" })).toContainEqual([
+      "formBuscador:j_idt69",
+      "formBuscador:j_idt69",
     ]);
   });
 
@@ -90,14 +210,5 @@ describe("request builders PJ", () => {
     expect(encodePayload(buildDetailPayload(html, descriptor))).toBe(
       await requestFixture("detail.urlencoded"),
     );
-  });
-
-  it("reproduce las particiones mecánicas Suprema y Superior conocidas", async () => {
-    expect(encodePayload(buildUniverseSearchPayload("FIXTURE_VIEWSTATE_UNIVERSE", "supreme"))).toBe(
-      await requestFixture("universe-supreme.urlencoded"),
-    );
-    expect(
-      encodePayload(buildUniverseSearchPayload("FIXTURE_VIEWSTATE_UNIVERSE", "superior")),
-    ).toBe(await requestFixture("universe-superior.urlencoded"));
   });
 });

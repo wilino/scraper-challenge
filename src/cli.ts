@@ -22,8 +22,10 @@ import {
 } from "./core/discovery-types.js";
 import { PjStructuralError } from "./sites/pj/parser.js";
 import { PjHistoricalStructuralError } from "./sites/pj/historical-parser.js";
+import { CorpusPlanArtifactError } from "./sites/pj/corpus-plan-artifact.js";
 
-const COMMANDS = new Set<CommandName>(["discover", "download", "retry-failed"]);
+const COMMANDS = new Set<CommandName>(["discover", "download", "retry-failed", "retry-details"]);
+const PARTITIONS = new Set(["supreme", "superior", "historical-arbitration-lima"] as const);
 const LOG_LEVELS = new Set<LogLevel>(["debug", "info", "warn", "error"]);
 const SHUTDOWN_GRACE_MS = 5000;
 
@@ -33,21 +35,24 @@ Comandos:
   discover       Descubrir y persistir documentos; no descarga PDFs
   download       Descargar PDFs pendientes del manifest
   retry-failed   Reintentar fallos abiertos que ya sean elegibles
+  retry-details  Reintentar enriquecimientos de detalle elegibles
 
 Opciones:
   --resume                    Reanudar discover desde un checkpoint compatible
   --limit <n>                 Limitar documentos procesados en esta ejecución
   --max-pages <n>             Limitar páginas de discover
   --pass <n>                  Registrar esta pasada completa para reconciliación
+  --partition <id>            Ejecutar solo una partición de discover
   --log-level <nivel>         debug | info | warn | error
   -h, --help                  Mostrar ayuda
 
 SIGINT finaliza con 130; SIGTERM finaliza con 143.`;
 
 const COMMAND_HELP: Readonly<Record<CommandName, string>> = {
-  discover: `Uso: npm run scrape -- discover [--resume] [--pass <n>] [--limit <n>] [--max-pages <n>] [--log-level <nivel>]`,
+  discover: `Uso: npm run scrape -- discover [--resume] [--partition <id>] [--pass <n>] [--limit <n>] [--max-pages <n>] [--log-level <nivel>]`,
   download: `Uso: npm run scrape -- download [--limit <n>] [--log-level <nivel>]`,
   "retry-failed": `Uso: npm run scrape -- retry-failed [--limit <n>] [--log-level <nivel>]`,
+  "retry-details": `Uso: npm run scrape -- retry-details [--limit <n>] [--log-level <nivel>]`,
 };
 
 export type CommandHandler = (
@@ -77,7 +82,10 @@ function positiveInteger(raw: string | undefined, option: string): number {
 function assertOptionAllowed(command: CommandName, option: string): void {
   if (
     command !== "discover" &&
-    (option === "--resume" || option === "--max-pages" || option === "--pass")
+    (option === "--resume" ||
+      option === "--max-pages" ||
+      option === "--pass" ||
+      option === "--partition")
   ) {
     throw new CliUsageError(`${option} solo puede usarse con discover`);
   }
@@ -116,6 +124,17 @@ export function parseCliArguments(arguments_: readonly string[]): CliInvocation 
         options.passNumber = positiveInteger(arguments_[index + 1], option);
         index += 1;
         break;
+      case "--partition": {
+        const value = arguments_[index + 1];
+        if (value === undefined || !PARTITIONS.has(value as never)) {
+          throw new CliUsageError(
+            `${option} requiere supreme, superior o historical-arbitration-lima`,
+          );
+        }
+        options.partitionId = value as NonNullable<CliOptions["partitionId"]>;
+        index += 1;
+        break;
+      }
       case "--log-level": {
         const value = arguments_[index + 1];
         if (value === undefined || !LOG_LEVELS.has(value as LogLevel)) {
@@ -141,7 +160,8 @@ export function exitCodeForError(error: unknown): number {
   if (
     error instanceof CliUsageError ||
     error instanceof ConfigurationError ||
-    error instanceof DiscoveryConfigurationError
+    error instanceof DiscoveryConfigurationError ||
+    error instanceof CorpusPlanArtifactError
   )
     return 2;
   if (error instanceof PreflightError) return 3;

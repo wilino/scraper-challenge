@@ -16,6 +16,8 @@ describe("configuración", () => {
     expect(config.connectTimeoutMs).toBe(15_000);
     expect(config.requestTimeoutMs).toBe(120_000);
     expect(config.pdfTimeoutMs).toBe(120_000);
+    expect(config).not.toHaveProperty("maxPages");
+    expect(config).not.toHaveProperty("maxDocuments");
   });
 
   it("permite configurar por separado los timeouts de conexión, HTML y PDF", () => {
@@ -57,4 +59,11 @@ describe("configuración", () => {
     writeFileSync(path.join(cwd, "archivo"), "x");
     expect(() => loadConfig({ OUTPUT_DIR: "archivo" }, cwd)).toThrow(ConfigurationError);
   });
+
+  it.each(["HTML_CONCURRENCY", "PDF_CONCURRENCY"])(
+    "rechaza %s distinto de uno mientras el flujo sea serial",
+    (name) => {
+      expect(() => loadConfig({ [name]: "2" })).toThrow(/debe ser 1/);
+    },
+  );
 });

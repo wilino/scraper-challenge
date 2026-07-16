@@ -62,22 +62,73 @@ export class FailureStore extends JsonlStore<ScrapeFailure> {
     return open.length;
   }
 
-  public async retryEligibleFailureIds(now: Date, signal?: AbortSignal): Promise<Set<string>> {
+  public async upsertOpenForDocument(
+    value: ScrapeFailure,
+    signal?: AbortSignal,
+  ): Promise<ScrapeFailure> {
     await this.initialize(signal);
-    const ids = new Set<string>();
+    const failure = scrapeFailureSchema.parse(value);
+    if (failure.resolution !== "open" || failure.documentId === undefined) {
+      throw new Error("El pendiente lógico requiere documentId y resolución open");
+    }
+    const key = documentKey(failure.phase, failure.documentId);
+    const openIds = [...(this.#openByDocument.get(key) ?? [])].sort();
+    const canonicalId = openIds[0];
+    for (const duplicateId of openIds.slice(1)) {
+      signal?.throwIfAborted();
+      const duplicate = this.#currentById.get(duplicateId);
+      if (duplicate === undefined) continue;
+      const resolved = {
+        ...duplicate,
+        resolution: "resolved" as const,
+        resolvedAt: failure.occurredAt,
+      };
+      await super.append(resolved);
+      this.#remember(resolved);
+    }
+    const current = canonicalId === undefined ? failure : { ...failure, failureId: canonicalId };
+    signal?.throwIfAborted();
+    await super.append(current);
+    this.#remember(current);
+    return current;
+  }
+
+  public async currentFailures(
+    phase?: ScrapeFailure["phase"],
+    signal?: AbortSignal,
+  ): Promise<ScrapeFailure[]> {
+    await this.initialize(signal);
+    return [...this.#currentById.values()]
+      .filter((failure) => phase === undefined || failure.phase === phase)
+      .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
+  }
+
+  public async retryEligibleFailures(
+    phase: ScrapeFailure["phase"],
+    now: Date,
+    signal?: AbortSignal,
+  ): Promise<ScrapeFailure[]> {
+    await this.initialize(signal);
+    const failures: ScrapeFailure[] = [];
     for (const failure of this.#currentById.values()) {
       signal?.throwIfAborted();
       if (
-        failure.phase === "download" &&
+        failure.phase === phase &&
         failure.documentId !== undefined &&
         failure.retryable &&
         failure.resolution === "open" &&
         (failure.nextRetryAt === undefined || Date.parse(failure.nextRetryAt) <= now.getTime())
       ) {
-        ids.add(failure.failureId);
+        failures.push(failure);
       }
     }
-    return ids;
+    return failures.sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
+  }
+
+  public async retryEligibleFailureIds(now: Date, signal?: AbortSignal): Promise<Set<string>> {
+    return new Set(
+      (await this.retryEligibleFailures("download", now, signal)).map(({ failureId }) => failureId),
+    );
   }
 
   public async initialize(signal?: AbortSignal): Promise<void> {

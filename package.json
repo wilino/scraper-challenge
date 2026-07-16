@@ -12,16 +12,17 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/cli.js",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:scripts": "node --test test/corpus-reconciler.test.mjs test/corpus-finalizer.test.mjs",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "validate:phase0": "node scripts/validate-phase0-fixtures.mjs",
     "reconcile:corpus": "node scripts/finalize-corpus-reconciliation.mjs",
-    "check": "npm run format:check && npm run lint && npm run validate:phase0 && npm run test && npm run build"
+    "check": "npm run format:check && npm run lint && npm run validate:phase0 && npm run test:scripts && npm run test:coverage && npm run build"
   },
   "dependencies": {
     "axios": "^1.18.1",
-    "axios-cookiejar-support": "^7.0.0",
     "cheerio": "^1.2.0",
     "fast-xml-parser": "^5.10.0",
     "fast-xml-validator": "^1.2.0",
@@ -32,6 +33,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.3",
+    "@vitest/coverage-v8": "^3.2.7",
     "eslint": "^10.7.0",
     "globals": "^17.7.0",
     "nock": "^14.0.16",

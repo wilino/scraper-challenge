@@ -1174,7 +1174,7 @@ for (const xmlPath of [
       console.warn("xmllint no disponible; se aplicaron comprobaciones estructurales internas.");
       break;
     }
-    throw new Error(`${xmlPath} no es XML válido: ${error.message}`);
+    throw new Error(`${xmlPath} no es XML válido: ${error.message}`, { cause: error });
   }
 }
 
@@ -1191,6 +1191,7 @@ try {
 } catch (error) {
   throw new Error(
     `Fase 0.1 reconciliación/finalización: pruebas fallaron\n${error.stdout?.toString() ?? ""}${error.stderr?.toString() ?? ""}`,
+    { cause: error },
   );
 }
 

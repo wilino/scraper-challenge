@@ -4,16 +4,17 @@ SCRAPER DE JURISPRUDENCIA PJ - GUÍA OPERATIVA
 
 Esta aplicación enumera resoluciones públicas del Poder Judicial del Perú mediante HTTP, conserva el estado de cada recorrido y descarga los PDF anunciados. No automatiza un navegador ni elude controles de acceso.
 
-El flujo normal consta de tres etapas:
+El flujo normal consta de cuatro etapas:
 
   1. discover: enumera y persiste documentos, sin descargar PDF.
-  2. download: descarga los PDF pendientes y valida su contenido.
-  3. retry-failed: reintenta únicamente descargas fallidas que estén abiertas, sean reintentables y ya sean elegibles.
+  2. retry-details: recupera enriquecimientos de detalle que quedaron pendientes.
+  3. download: descarga los PDF pendientes y valida su contenido.
+  4. retry-failed: reintenta únicamente descargas fallidas que estén abiertas, sean reintentables y ya sean elegibles.
 
 
 2. REQUISITOS
 
-  - Node.js 22 o posterior; Node.js 24 LTS es la versión recomendada y usada por CI.
+  - Node.js 22 o posterior; CI usa Node.js 22.
   - npm incluido con Node.js.
   - Conectividad HTTPS hacia jurisprudencia.pj.gob.pe.
   - Salida de red permitida por el sitio. Un HTTP 403 puede indicar que se requiere una salida autorizada desde Perú.
@@ -42,10 +43,15 @@ Mostrar la sintaxis de un comando:
   npm run scrape -- discover --help
   npm run scrape -- download --help
   npm run scrape -- retry-failed --help
+  npm run scrape -- retry-details --help
 
 Validar formato, lint, contratos, pruebas y compilación:
 
   npm run check
+
+Ejecutar el reporte de cobertura con umbrales:
+
+  npm run test:coverage
 
 Compilar y ejecutar la versión compilada:
 
@@ -123,14 +129,6 @@ Variables y valores predeterminados:
     Predeterminado: 30000
     Pausa global cuando un HTTP 429 no incluye un Retry-After utilizable.
 
-  MAX_PAGES
-    Predeterminado: 10000
-    Valor de configuración validado. La CLI actual no lo aplica como límite de corrida; use discover --max-pages para imponer un límite operativo explícito.
-
-  MAX_DOCUMENTS
-    Predeterminado: 1000000
-    Valor de configuración validado. La CLI actual no lo aplica como límite de corrida; use discover --limit para limitar documentos nuevos en una ejecución.
-
   MAX_PDF_BYTES
     Predeterminado: 104857600
     Tamaño máximo admitido por PDF, en bytes.
@@ -173,9 +171,18 @@ Prueba controlada de hasta 2 páginas en total:
 
   npm run scrape -- discover --max-pages 2
 
+Canary de una sola partición:
+
+  OUTPUT_DIR=./output/canary-supreme npm run scrape -- discover \
+    --partition supreme --limit 11 --max-pages 2
+
+--partition admite exclusivamente supreme, superior o historical-arbitration-lima. Selecciona una
+definición del plan de corpus y queda reflejado en corpus-plan.json y el hash de consulta. Es una
+herramienta de diagnóstico parcial: no marca el corpus global como completo.
+
 La opción --limit cuenta documentos nuevos persistidos durante esa ejecución. No es un límite de solicitudes ni de documentos ya conocidos. La opción --max-pages cuenta páginas visitadas entre las particiones de la ejecución. Cualquier salida por límite es parcial y no prueba que el corpus esté completo.
 
-Particiones recorridas, en orden:
+Sin --partition, las particiones se recorren en este orden:
 
   - supreme
   - superior
@@ -198,7 +205,9 @@ También se puede limitar una reanudación:
 
 Use --resume después de una interrupción o una ejecución parcial cuando desee continuar desde la página y fila confirmadas. Sin --resume, discover comienza de nuevo en la primera partición, pero la persistencia idempotente evita volver a insertar documentos conocidos.
 
-La reanudación se rechaza si cambió el origen, la consulta o la estrategia de particiones. Un checkpoint malformado también se rechaza; no lo edite manualmente mientras haya una ejecución activa.
+La reanudación se rechaza si cambió el origen, la consulta o el conjunto de particiones, incluida
+una canary seleccionada con --partition. Un checkpoint malformado también se rechaza; no lo edite
+manualmente mientras haya una ejecución activa.
 
 SIGINT permite una finalización controlada y devuelve 130. SIGTERM devuelve 143. El proceso concede hasta cinco segundos para cerrar antes de reportar la interrupción.
 
@@ -230,7 +239,13 @@ Mostrar todas las opciones del finalizador:
 El finalizador no ejecuta el scraping. Audita los documentos, memberships, estados finales del manifest y evidencia de convergencia que ya existen. Por defecto espera en OUTPUT_DIR:
 
   run-receipt.json
-    Metadatos schemaVersion 2 ligados a un commit, con particiones, totales, diferencia enumerable o no enumerable y aprobación trazable de alcance.
+    Metadatos schemaVersion 2 ligados al commit y a corpus-plan.json. Deben copiar exactamente
+    corpusPlanVersion, queryHash, fingerprint como corpusPlanFingerprint y el orden de partitions,
+    además de totales, diferencia enumerable o no enumerable y aprobación trazable de alcance.
+
+  corpus-plan.json
+    Artefacto generado por la aplicación al inicializar OUTPUT_DIR. No se edita ni se copia entre
+    corridas; el finalizador valida su commit, contenido, fingerprints y orden contra run-receipt.
 
   supervisor.log
     Registro de pasadas completas y de la pasada convergente.
@@ -262,7 +277,20 @@ Cada PDF se escribe primero con sufijo .part. Solo después de validar tamaño, 
 El directorio OUTPUT_DIR/pdf debe ser un directorio real y no un enlace simbólico. Un PDF inválido, truncado o demasiado grande se elimina y se registra como fallo; nunca se acepta como descarga correcta.
 
 
-9. REINTENTO DE FALLOS
+9. REINTENTO DE DETALLES Y DESCARGAS
+
+Reintentar todos los detalles actualmente elegibles:
+
+  npm run scrape -- retry-details
+
+Limitar la ejecución:
+
+  npm run scrape -- retry-details --limit 20
+
+retry-details selecciona fallos abiertos y reintentables de la fase detail. Reconstruye una sesión
+JSF válida, procesa los descriptores serialmente y, al recuperar un documento, persiste la fila,
+membresía y manifest antes de resolver el fallo. No reutiliza cookies ni ViewState persistidos.
+Repita el comando hasta drenar los detalles elegibles antes de afirmar una reconciliación completa.
 
 Reintentar todas las descargas actualmente elegibles:
 
@@ -280,7 +308,8 @@ retry-failed selecciona únicamente documentos cuyo último estado del manifest 
 
 Un reintento correcto añade un evento downloaded al manifest y un evento resolved al historial de fallos. Los fallos permanentes, de seguridad, abandonados o todavía sujetos a Retry-After no se fuerzan.
 
-No use --resume, --max-pages ni --pass con download o retry-failed; son opciones exclusivas de discover.
+No use --resume, --partition, --max-pages ni --pass con retry-details, download o retry-failed; son
+opciones exclusivas de discover.
 
 
 10. TRATAMIENTO DE HTTP 429 Y FALLOS TRANSITORIOS
@@ -322,6 +351,10 @@ Dentro de OUTPUT_DIR se crean los siguientes artefactos locales:
   pdf/*.pdf
     PDF validados. El nombre contiene documentId, fecha y un identificador humano saneado.
 
+  corpus-plan.json
+    Plan efectivo de la corrida, commit, particiones y fingerprints. Impide mezclar datasets
+    incompatibles y no debe editarse ni copiarse entre OUTPUT_DIR.
+
   corpus-reconciliation-receipt.json
     Recibo agregado opcional producido por reconcile:corpus después de una reconciliación convergida.
 
@@ -330,11 +363,13 @@ Los JSONL y archivos de estado forman una unidad operativa. Para conservar reanu
 
 12. SALIDA DEL COMANDO
 
-Al finalizar correctamente, la CLI imprime una sola línea JSON de resumen. Sus campos principales son:
+Al finalizar correctamente, la CLI imprime en stdout una sola línea JSON de resumen. Los logs
+estructurados y errores se escriben en stderr. Sus campos principales son:
 
   command: comando ejecutado.
   partitions: páginas, total informado, observados, insertados, duplicados y nuevas membresías.
   pdfs: cantidades downloaded, existing y failed.
+  detailRetries: en retry-details, cantidades selected, resolved, stillFailed y notEligible.
   rateLimitResponses: respuestas HTTP 429 observadas.
   globalTotal: total publicado inicial y final cuando aplica.
   durationMs: duración total.
@@ -349,6 +384,14 @@ No interprete stopReason=natural_end como completitud si corpusReconciled es fal
 Los logs estructurados incluyen un runId y omiten o redactan cookies, autorización, credenciales, tokens y ViewState. Para diagnóstico detallado:
 
   npm run scrape -- discover --limit 1 --log-level debug
+
+Para separar y validar ambos streams:
+
+  npm run --silent scrape -- discover --partition supreme --limit 1 >summary.json 2>run.log
+  node -e 'JSON.parse(require("node:fs").readFileSync("summary.json", "utf8"))'
+
+--silent suprime el encabezado que npm añade a stdout; no silencia los logs de la aplicación. La
+ayuda también usa stdout. Los errores de argumentos, configuración y ejecución usan stderr.
 
 
 13. CÓDIGOS DE SALIDA
@@ -382,8 +425,10 @@ Prueba inicial pequeña:
 
   npm ci
   npm run check
-  npm run scrape -- discover --limit 10 --log-level info
-  npm run scrape -- download --limit 3 --log-level info
+  OUTPUT_DIR=./output/canary npm run scrape -- discover \
+    --partition supreme --limit 11 --max-pages 2 --log-level info
+  OUTPUT_DIR=./output/canary npm run scrape -- retry-details --limit 11 --log-level info
+  OUTPUT_DIR=./output/canary npm run scrape -- download --limit 3 --log-level info
 
 Recorrido reanudable:
 
@@ -395,6 +440,7 @@ Si se interrumpe:
 
 Descarga y recuperación:
 
+  npm run scrape -- retry-details
   npm run scrape -- download
   npm run scrape -- retry-failed
 

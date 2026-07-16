@@ -226,8 +226,6 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
           } catch (error: unknown) {
             if (isInterruption(error, options.signal)) throw error;
             if (error instanceof DiscoverySessionStateError) throw error;
-            const membership = await this.#recordMembership(partitionId, record);
-            if (membership) summary.newCorpusMemberships += 1;
             await this.#recordDetailFailure(
               record.nativeId,
               partitionId,
@@ -235,6 +233,8 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
               error,
               options.signal,
             );
+            const membership = await this.#recordMembership(partitionId, record);
+            if (membership) summary.newCorpusMemberships += 1;
             summary.detailFailures += 1;
             await this.#persistence.confirmCheckpoint(
               this.#checkpoint(partitionId, page.parsed.pagination.currentPage, row + 1),
@@ -243,13 +243,8 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
           }
           validateDocument(document, record, page, row);
           const compactDocument = compactDocumentIdentity(document);
-          const membership = await this.#recordMembership(partitionId, record, compactDocument);
-          if (membership) summary.newCorpusMemberships += 1;
           await this.#ensureManifest(document, manifestDocumentIds);
-          const inserted = await this.#persistence.confirmDocuments(
-            [document],
-            this.#checkpoint(partitionId, page.parsed.pagination.currentPage, row + 1),
-          );
+          const inserted = await this.#persistence.persistDocuments([document]);
           if (inserted === 1) {
             indexDocumentIdentities(documentsByIdentity, compactDocument);
             summary.newDocuments += 1;
@@ -262,6 +257,19 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
             document.documentId,
             this.#now().toISOString(),
             options.signal,
+          );
+          if (record.nativeId !== document.documentId) {
+            await this.#failures.resolveOpenForDocument(
+              "detail",
+              record.nativeId,
+              this.#now().toISOString(),
+              options.signal,
+            );
+          }
+          const membership = await this.#recordMembership(partitionId, record, compactDocument);
+          if (membership) summary.newCorpusMemberships += 1;
+          await this.#persistence.confirmCheckpoint(
+            this.#checkpoint(partitionId, page.parsed.pagination.currentPage, row + 1),
           );
         }
         firstPage = false;
@@ -402,7 +410,7 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
       resolution: "open",
       occurredAt: this.#now().toISOString(),
     };
-    await this.#failures.append(failure, signal);
+    await this.#failures.upsertOpenForDocument(failure, signal);
   }
 }
 

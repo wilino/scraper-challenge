@@ -12,8 +12,6 @@ export default tseslint.config(
       "test/lint-fixtures/**",
       "test/fixtures/**",
       "test/corpus-reconciler.test.mjs",
-      "scripts/validate-phase0-fixtures.mjs",
-      "scripts/lib/**",
     ],
   },
   {

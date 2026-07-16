@@ -14,6 +14,38 @@ const fixture = async (name: string): Promise<string> =>
   readFile(new URL(`../../../fixtures/pj/${name}`, import.meta.url), "utf8");
 
 describe("parser offline PJ", () => {
+  it("falla cerrado ante resultados incompletos o un ViewState reutilizado", async () => {
+    const empty = `<form id="formBuscador">
+      <input name="javax.faces.ViewState" value="SAME_STATE" />
+      <span id="formBuscador:data1"></span>
+      <div id="formBuscador:panel"></div>
+    </form>`;
+    expect(() => parseResultsPage(empty)).toThrow(/total de resultados ausente/);
+    expect(() =>
+      parseResultsPage(
+        empty.replace(
+          '<span id="formBuscador:data1">',
+          '<span id="formBuscador:optResultado">De un total de 1 resoluciones, se obtuvieron 1 resultados.</span><span id="formBuscador:data1">',
+        ),
+      ),
+    ).toThrow(/página con resultados pero sin filas/);
+
+    const page = await fixture("search-page-1.html");
+    expect(() =>
+      parseResultsPage(page, {
+        previousViewState: "FIXTURE_VIEWSTATE_1",
+        requireChangedViewState: true,
+      }),
+    ).toThrow(/reutilizó el ViewState anterior/);
+  });
+
+  it("promueve redirects y errores parciales a fallos estructurales", async () => {
+    const redirect = await fixture("partial-redirect.xml");
+    const error = await fixture("partial-error.xml");
+    expect(() => parseResultsPage(redirect)).toThrow(/requiere rebootstrap/);
+    expect(() => parseResultsPage(error)).toThrow(/Error parcial PJ/);
+  });
+
   it("extrae página 1 y página 2 con IDs, totales y fingerprints distintos", async () => {
     const page1 = parseResultsPage(await fixture("search-page-1.html"));
     const page2 = parseResultsPage(await fixture("search-page-2.html"), {

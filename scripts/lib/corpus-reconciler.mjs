@@ -48,7 +48,7 @@ const parseLines = (text) =>
       try {
         return JSON.parse(line);
       } catch (error) {
-        throw new Error(`NDJSON línea ${index + 1}: ${error.message}`);
+        throw new Error(`NDJSON línea ${index + 1}: ${error.message}`, { cause: error });
       }
     });
 

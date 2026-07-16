@@ -16,11 +16,21 @@ export const systemClock: Clock = {
         reject(signalError(signal));
         return;
       }
-      const timer = setTimeout(resolve, milliseconds);
-      const abort = () => {
+      let settled = false;
+      const settle = (error?: Error) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
-        reject(signalError(signal));
+        signal?.removeEventListener("abort", abort);
+        if (error === undefined) resolve();
+        else reject(error);
       };
+      const abort = () => {
+        settle(signalError(signal));
+      };
+      const timer = setTimeout(() => {
+        settle();
+      }, milliseconds);
       signal?.addEventListener("abort", abort, { once: true });
     });
   },
@@ -30,6 +40,8 @@ interface Waiter {
   resolve: (release: () => void) => void;
   reject: (reason?: unknown) => void;
   signal?: AbortSignal;
+  abort?: () => void;
+  settled: boolean;
 }
 
 export interface HostCooldown {
@@ -111,15 +123,16 @@ export class RateLimiter {
       return this.createRelease();
     }
     return await new Promise<() => void>((resolve, reject) => {
-      const waiter: Waiter = { resolve, reject };
+      const waiter: Waiter = { resolve, reject, settled: false };
       if (signal !== undefined) waiter.signal = signal;
       const abort = () => {
         const index = this.queue.indexOf(waiter);
         if (index >= 0) this.queue.splice(index, 1);
-        reject(signalError(signal));
+        this.rejectWaiter(waiter, signalError(signal));
       };
-      signal?.addEventListener("abort", abort, { once: true });
+      waiter.abort = abort;
       this.queue.push(waiter);
+      signal?.addEventListener("abort", abort, { once: true });
     });
   }
 
@@ -138,11 +151,23 @@ export class RateLimiter {
       const waiter = this.queue.shift();
       if (waiter === undefined) return;
       if (waiter.signal?.aborted === true) {
-        waiter.reject(signalError(waiter.signal));
+        this.rejectWaiter(waiter, signalError(waiter.signal));
         continue;
       }
+      this.settleWaiter(waiter);
       this.active += 1;
       waiter.resolve(this.createRelease());
     }
+  }
+
+  private settleWaiter(waiter: Waiter): boolean {
+    if (waiter.settled) return false;
+    waiter.settled = true;
+    if (waiter.abort !== undefined) waiter.signal?.removeEventListener("abort", waiter.abort);
+    return true;
+  }
+
+  private rejectWaiter(waiter: Waiter, reason: unknown): void {
+    if (this.settleWaiter(waiter)) waiter.reject(reason);
   }
 }

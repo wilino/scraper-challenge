@@ -107,11 +107,10 @@ export class PjHistoricalAdapter {
           page: target,
         };
       },
-      rebootstrap: async () => {
+      restorePage: async () => {
         this.#logger.warn({ page: target }, "Reconstruyendo sesión de la colección histórica");
         await this.#recoverToPage(target - 1, signal);
       },
-      maxRebootstraps: 1,
     });
     this.#state.accept({
       effectiveUrl: response.url,

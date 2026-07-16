@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -11,6 +11,7 @@ import {
 } from "./cli-contract.js";
 import type { ScraperConfig } from "./config/env.js";
 import { DiscoveryOrchestrator } from "./core/discovery-orchestrator.js";
+import { DetailRetryService, type DetailRetryResult } from "./core/detail-retry-service.js";
 import type { DiscoverySummary } from "./core/discovery-types.js";
 import { DownloadManifestStore } from "./core/download-manifest-store.js";
 import type { CompactDownloadState } from "./core/download-manifest-store.js";
@@ -25,42 +26,58 @@ import type { DownloadManifestEvent } from "./models/download-manifest.js";
 import type { ScrapeFailure } from "./models/failure.js";
 import { PjAdapter } from "./sites/pj/adapter.js";
 import {
+  ensureCorpusPlanArtifact,
+  ensureExistingCorpusPlanArtifact,
+  resolveCurrentCommit,
+} from "./sites/pj/corpus-plan-artifact.js";
+import { CORPUS_PLAN, selectCorpusPlan, type SelectedCorpusPlan } from "./sites/pj/corpus-plan.js";
+import {
   PjCorpusDiscoverySource,
   type PjCorpusRecord,
 } from "./sites/pj/corpus-discovery-source.js";
 import { PjDiscoverySource } from "./sites/pj/discovery-source.js";
 import { PjHistoricalAdapter } from "./sites/pj/historical-adapter.js";
-import {
-  HISTORICAL_PARTITION,
-  PjHistoricalDiscoverySource,
-} from "./sites/pj/historical-discovery-source.js";
-
-const PARTITIONS = ["supreme", "superior", HISTORICAL_PARTITION] as const;
+import { PjHistoricalDiscoverySource } from "./sites/pj/historical-discovery-source.js";
 
 class DownloadScanLimitReached extends Error {}
 class DocumentPreflightComplete extends Error {}
 
-function queryHash(): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify([
-        {
-          court: "supreme",
-          query: "",
-          mode: "specialized",
-          includeAutoQualifiers: true,
-        },
-        { court: "superior", query: "", mode: "general" },
-        {
-          collection: HISTORICAL_PARTITION,
-          court: 2,
-          instance: 2,
-          specialty: 2,
-          year: "",
-        },
-      ]),
-    )
-    .digest("hex");
+async function ensureCompatibleDataset(
+  config: ScraperConfig,
+  plan: SelectedCorpusPlan = CORPUS_PLAN,
+): Promise<void> {
+  await ensureCorpusPlanArtifact(config.outputDir, await resolveCurrentCommit(process.cwd()), plan);
+}
+
+async function ensureCompatibleExistingDataset(config: ScraperConfig): Promise<SelectedCorpusPlan> {
+  return await ensureExistingCorpusPlanArtifact(
+    config.outputDir,
+    await resolveCurrentCommit(process.cwd()),
+  );
+}
+
+function detailRetryOperationSummary(
+  result: DetailRetryResult,
+  startedAt: number,
+  rateLimitResponses: number,
+): OperationSummary {
+  return {
+    command: "retry-details",
+    partitions: documentPartitions(result.partitions),
+    pdfs: { downloaded: 0, existing: 0, failed: 0 },
+    rateLimitResponses,
+    globalTotal: { initial: null, final: null },
+    durationMs: duration(startedAt),
+    stopReason: result.limited ? "limit" : result.stillFailed > 0 ? "failed" : "natural_end",
+    definitiveFailures: result.remaining,
+    corpusReconciled: false,
+    detailRetries: {
+      selected: result.selected,
+      resolved: result.resolved,
+      stillFailed: result.stillFailed,
+      notEligible: result.notEligible,
+    },
+  };
 }
 
 function duration(startedAt: number): number {
@@ -252,6 +269,8 @@ export class DefaultCliOperations implements CliOperations {
     context: CommandContext,
   ): Promise<OperationSummary> {
     const startedAt = Date.now();
+    const plan = selectCorpusPlan(options.partitionId);
+    await ensureCompatibleDataset(context.config, plan);
     const logger = createLogger({
       runId: randomUUID(),
       level: options.logLevel ?? context.config.logLevel,
@@ -264,11 +283,12 @@ export class DefaultCliOperations implements CliOperations {
       source: new PjCorpusDiscoverySource(
         new PjDiscoverySource(adapter),
         new PjHistoricalDiscoverySource(historicalAdapter),
+        plan.partitionIds,
       ),
       outputDirectory: context.config.outputDir,
       baseUrl: context.config.baseUrl,
-      queryHash: queryHash(),
-      partitions: PARTITIONS,
+      queryHash: plan.queryHash,
+      partitions: plan.partitionIds,
       corpusReconciliationPassed: false,
       passNumber: options.passNumber ?? 1,
     });
@@ -303,12 +323,50 @@ export class DefaultCliOperations implements CliOperations {
     return this.#runDownload("retry-failed", options, context);
   }
 
+  public async retryDetails(
+    options: Parameters<CliOperations["retryDetails"]>[0],
+    context: CommandContext,
+  ): Promise<OperationSummary> {
+    const startedAt = Date.now();
+    const plan = await ensureCompatibleExistingDataset(context.config);
+    const logger = createLogger({
+      runId: randomUUID(),
+      level: options.logLevel ?? context.config.logLevel,
+      context: { command: "retry-details" },
+    });
+    const client = new PjHttpClient(context.config, { logger });
+    const source = new PjCorpusDiscoverySource(
+      new PjDiscoverySource(new PjAdapter(context.config, { http: client, logger })),
+      new PjHistoricalDiscoverySource(
+        new PjHistoricalAdapter(context.config, { http: client, logger }),
+      ),
+      plan.partitionIds,
+    );
+    try {
+      const result = await new DetailRetryService({
+        source,
+        outputDirectory: context.config.outputDir,
+      }).run({
+        ...(options.limit === undefined ? {} : { limit: options.limit }),
+        signal: context.signal,
+      });
+      return detailRetryOperationSummary(
+        result,
+        startedAt,
+        client.metricSnapshot().rateLimitResponses,
+      );
+    } finally {
+      logger.flush();
+    }
+  }
+
   async #runDownload(
     command: "download" | "retry-failed",
     options: Parameters<CliOperations["download"]>[0],
     context: CommandContext,
   ): Promise<OperationSummary> {
     const startedAt = Date.now();
+    await ensureCompatibleExistingDataset(context.config);
     const documents = await existingDocuments(context.config, context.signal);
     const manifestStore = new DownloadManifestStore(
       path.join(context.config.outputDir, "data", "download-manifest.jsonl"),

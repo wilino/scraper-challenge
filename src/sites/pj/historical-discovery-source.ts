@@ -6,8 +6,9 @@ import type {
 import { scrapedDocumentSchema, type ScrapedDocument } from "../../models/document.js";
 import type { PjHistoricalAdapter } from "./historical-adapter.js";
 import type { PjHistoricalParsedResults, PjHistoricalRecord } from "./historical-parser.js";
+import { HISTORICAL_PARTITION } from "./corpus-plan.js";
 
-export const HISTORICAL_PARTITION = "historical-arbitration-lima";
+export { HISTORICAL_PARTITION } from "./corpus-plan.js";
 
 export class PjHistoricalDiscoverySource implements DiscoverySource<PjHistoricalRecord> {
   constructor(

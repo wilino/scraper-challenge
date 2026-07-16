@@ -34,8 +34,6 @@ const config: ScraperConfig = {
   backoffBaseMs: 1,
   backoffMaxMs: 1,
   globalCooldownAfter429Ms: 1,
-  maxPages: 2,
-  maxDocuments: 20,
   maxPdfBytes: 1024,
   maxHtmlBytes: 1024 * 1024,
   htmlConcurrency: 1,
@@ -113,7 +111,7 @@ class QueueTransport implements PjHttpTransport {
   async requestStateful(request: StatefulRequest<string>): Promise<ControlledResponse<string>> {
     this.requests.push(request.buildRequest(1));
     if (this.recoverFirstStateful) {
-      await request.rebootstrap(
+      await request.restorePage(
         new HttpRequestError("vista expirada de prueba", {
           classification: "transient",
           retryable: true,
@@ -123,8 +121,27 @@ class QueueTransport implements PjHttpTransport {
         }),
       );
       this.requests.push(request.buildRequest(2));
+      return this.take();
     }
-    return this.take();
+    const first = this.responses.shift();
+    if (
+      first instanceof HttpRequestError &&
+      first.classification === "http_transient" &&
+      first.status === 500
+    ) {
+      await request.restorePage(first);
+      this.requests.push(request.buildRequest(2));
+      try {
+        return this.take();
+      } catch (error: unknown) {
+        if (!(error instanceof HttpRequestError)) throw error;
+        await request.restorePage(error);
+        throw error;
+      }
+    }
+    if (first === undefined) throw new Error("Respuesta de prueba no configurada");
+    if (first instanceof Error) throw first;
+    return first;
   }
 
   private take(): ControlledResponse<string> {
@@ -142,8 +159,12 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       fixture("search-page-1.html"),
       fixture("partial-page-2.xml"),
     ]);
+    const corpusInitial = initial.replace(
+      "</form>",
+      '<input type="checkbox" name="formBuscador:varAutos2" /></form>',
+    );
     const http = new QueueTransport([
-      response(initial),
+      response(corpusInitial),
       response(page1),
       response(retargetPartial(page2, 12, "salto directo 12"), "text/xml;charset=UTF-8"),
     ]);
@@ -153,7 +174,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
     });
     const source = new PjDiscoverySource(adapter);
 
-    const resumed = await source.openPartition("superior", 12);
+    const resumed = await source.openPartition("supreme", 12);
 
     expect(resumed.parsed.pagination.currentPage).toBe(12);
     expect(http.requests.map(({ page }) => page)).toEqual([undefined, 1, 12]);
@@ -181,7 +202,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
     const adapter = new PjAdapter(config, { http, logger });
 
     await adapter.preflight();
-    const first = await adapter.search({ court: "supreme", query: "derecho" });
+    const first = await adapter.search({ court: "supreme", query: "derecho", mode: "specialized" });
     const second = await adapter.nextPage();
     const record = second.records[0];
     expect(record).toBeDefined();
@@ -194,7 +215,10 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
     expect(second.fingerprint).not.toBe(first.fingerprint);
     expect(complete.merged.pdf?.url).toContain("ServletDescarga?uuid=");
     expect(http.requests.map((request) => request.body).filter(Boolean)).toEqual([
-      await requestFixture("search-page-1.urlencoded"),
+      (await requestFixture("search-page-1.urlencoded")).replace(
+        "formBuscador%3Atabpanel-value=general",
+        "formBuscador%3Atabpanel-value=especializada",
+      ),
       await requestFixture("page-2.urlencoded"),
       await requestFixture("detail.urlencoded"),
     ]);
@@ -225,7 +249,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       logger: createLogger({ runId: "detail-500-recovery-test", level: "silent" }),
     });
 
-    await adapter.search({ court: "supreme", query: "derecho" });
+    await adapter.search({ court: "supreme", query: "derecho", mode: "specialized" });
     const second = await adapter.nextPage();
     const record = second.records[0];
     if (record === undefined) throw new Error("Fixture sin registro en página 2");
@@ -246,7 +270,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
     ]);
   });
 
-  it("tras un segundo fallo reconstruye una sola vez la página y conserva el error para el llamador", async () => {
+  it("tras el intento posterior limpia la sesión antes de continuar con la siguiente fila", async () => {
     const [initial, page1, page2, detail] = await Promise.all([
       fixture("initial.html"),
       fixture("search-page-1.html"),
@@ -278,7 +302,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       logger: createLogger({ runId: "bounded-detail-500-recovery-test", level: "silent" }),
     });
 
-    await adapter.search({ court: "supreme", query: "derecho" });
+    await adapter.search({ court: "supreme", query: "derecho", mode: "specialized" });
     const second = await adapter.nextPage();
     const failedRecord = second.records[0];
     const nextRecord = second.records[1];
@@ -298,7 +322,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
     expect(http.requests).toHaveLength(12);
   });
 
-  it("propaga un segundo fallo no recuperable sin reconstruir nuevamente la sesión", async () => {
+  it("limpia también la sesión tras un fallo no recuperable posterior al restore", async () => {
     const [initial, page1, page2] = await Promise.all([
       fixture("initial.html"),
       fixture("search-page-1.html"),
@@ -306,6 +330,8 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
     ]);
     const recoveredPage1 = page1.replaceAll("FIXTURE_VIEWSTATE_1", "RECOVERED_VIEWSTATE_1");
     const recoveredPage2 = page2.replaceAll("FIXTURE_VIEWSTATE_2", "RECOVERED_VIEWSTATE_2");
+    const cleanPage1 = page1.replaceAll("FIXTURE_VIEWSTATE_1", "CLEAN_VIEWSTATE_1");
+    const cleanPage2 = page2.replaceAll("FIXTURE_VIEWSTATE_2", "CLEAN_VIEWSTATE_2");
     const structuralError = new HttpRequestError("panel de detalle ausente", {
       classification: "structural",
       retryable: false,
@@ -321,19 +347,22 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       response(recoveredPage1),
       response(recoveredPage2, "text/xml;charset=UTF-8"),
       structuralError,
+      response(initial),
+      response(cleanPage1),
+      response(cleanPage2, "text/xml;charset=UTF-8"),
     ]);
     const adapter = new PjAdapter(config, {
       http,
       logger: createLogger({ runId: "non-recoverable-detail-test", level: "silent" }),
     });
 
-    await adapter.search({ court: "supreme", query: "derecho" });
+    await adapter.search({ court: "supreme", query: "derecho", mode: "specialized" });
     const second = await adapter.nextPage();
     const record = second.records[0];
     if (record === undefined) throw new Error("Fixture sin registro en página 2");
 
     await expect(adapter.fetchDetail(record)).rejects.toBe(structuralError);
-    expect(http.requests).toHaveLength(8);
+    expect(http.requests).toHaveLength(11);
     expect(http.requests.filter(({ phase }) => phase === "detail")).toHaveLength(2);
   });
 
@@ -363,7 +392,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       logger: createLogger({ runId: "fatal-detail-recovery-test", level: "silent" }),
     });
 
-    await adapter.search({ court: "supreme", query: "derecho" });
+    await adapter.search({ court: "supreme", query: "derecho", mode: "specialized" });
     const second = await adapter.nextPage();
     const record = second.records[0];
     if (record === undefined) throw new Error("Fixture sin registro en página 2");
@@ -376,7 +405,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
     expect(http.requests.filter(({ phase }) => phase === "detail")).toHaveLength(1);
   });
 
-  it("promueve a fatal un fallo de cleanup después del segundo 500", async () => {
+  it("promueve a fatal un fallo del cleanup posterior", async () => {
     const [initial, page1, page2] = await Promise.all([
       fixture("initial.html"),
       fixture("search-page-1.html"),
@@ -399,7 +428,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       response(initial),
       response(recoveredPage1),
       response(recoveredPage2, "text/xml;charset=UTF-8"),
-      exhaustedDetail500("segundo 500 agotado"),
+      exhaustedDetail500("500 posterior al restore"),
       response(initial),
       cleanupFailure,
     ]);
@@ -408,7 +437,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       logger: createLogger({ runId: "fatal-second-detail-cleanup-test", level: "silent" }),
     });
 
-    await adapter.search({ court: "supreme", query: "derecho" });
+    await adapter.search({ court: "supreme", query: "derecho", mode: "specialized" });
     const second = await adapter.nextPage();
     const record = second.records[0];
     if (record === undefined) throw new Error("Fixture sin registro en página 2");
@@ -443,7 +472,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       logger: createLogger({ runId: "recovery-test", level: "silent" }),
     });
 
-    await adapter.search({ court: "supreme", query: "derecho" });
+    await adapter.search({ court: "supreme", query: "derecho", mode: "specialized" });
     const recovered = await adapter.nextPage();
     const pageRequests = http.requests.filter((request) => request.page === 2);
 
@@ -473,7 +502,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       logger: createLogger({ runId: "silent-repeat-test", level: "silent" }),
     });
 
-    const first = await adapter.search({ court: "supreme", query: "derecho" });
+    const first = await adapter.search({ court: "supreme", query: "derecho", mode: "specialized" });
     const recovered = await adapter.nextPage();
     const pageRequests = http.requests.filter((request) => request.page === 2);
 
@@ -513,7 +542,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       logger: createLogger({ runId: "bounded-repeat-test", level: "silent" }),
     });
 
-    await adapter.search({ court: "supreme", query: "derecho" });
+    await adapter.search({ court: "supreme", query: "derecho", mode: "specialized" });
     await expect(adapter.nextPage()).rejects.toThrow(
       "La página 2 repitió silenciosamente la anterior",
     );
@@ -541,7 +570,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       logger: createLogger({ runId: "wrong-target-recovery-test", level: "silent" }),
     });
 
-    const first = await adapter.search({ court: "supreme", query: "derecho" });
+    const first = await adapter.search({ court: "supreme", query: "derecho", mode: "specialized" });
     const recovered = await adapter.nextPage();
 
     expect(recovered.pagination.currentPage).toBe(2);
@@ -574,7 +603,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       logger: createLogger({ runId: "bounded-wrong-target-test", level: "silent" }),
     });
 
-    const first = await adapter.search({ court: "supreme", query: "derecho" });
+    const first = await adapter.search({ court: "supreme", query: "derecho", mode: "specialized" });
     await expect(adapter.nextPage()).rejects.toThrow("La página 2 respondió como página 1");
 
     expect(http.requests.filter((request) => request.page === 2)).toHaveLength(2);
@@ -609,7 +638,7 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       logger: createLogger({ runId: "direct-target-recovery-test", level: "silent" }),
     });
 
-    await adapter.search({ court: "supreme", query: "derecho" });
+    await adapter.search({ court: "supreme", query: "derecho", mode: "specialized" });
     const recovered = await adapter.goToPage(12);
 
     expect(recovered.pagination.currentPage).toBe(12);

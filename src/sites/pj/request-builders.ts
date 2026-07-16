@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
+
 import { load, type CheerioAPI } from "cheerio";
 
 import type { OrderedPairs } from "../../models/http-request.js";
-import { PJ_FORM_ID, PJ_SELECTORS, PJ_VIEW_STATE, type PjCourt } from "./selectors.js";
+import { PJ_FORM_ID, PJ_SELECTORS, type PjCourt } from "./selectors.js";
 
 const DETAIL_PARAMETERS = [
   "uuid",
@@ -15,6 +17,10 @@ const DETAIL_PARAMETERS = [
   "sala",
   "sumilla",
 ] as const;
+
+// Legacy PJ markup encoded the specialized action in this exact generated control.
+// It is intentionally narrow: incidental values of "21" are only sort-order metadata.
+const LEGACY_SPECIALIZED_MARKER: readonly [string, string] = [`${PJ_FORM_ID}:j_idt34`, "21"];
 
 export interface SearchPayloadOptions {
   court: PjCourt;
@@ -88,24 +94,67 @@ function extractSubmitParameters(
     .filter((_index, element) => {
       const onclick = ($(element).attr("onclick") ?? "").replace(/\\(['"])/gu, "$1");
       return /['"]forward['"]\s*:\s*['"]buscar['"]/u.test(onclick);
-    });
-  const submit = submits.eq(mode === "specialized" ? 1 : 0);
-  const name = submit.attr("name");
-  if (name === undefined) throw new Error("Estructura PJ inválida: botón de búsqueda ausente");
+    })
+    .toArray()
+    .map((element) => parseSubmit($, element));
+  if (submits.length === 0) throw new Error("Estructura PJ inválida: botón de búsqueda ausente");
 
-  const pairs: OrderedPairs = [[name, name]];
+  const explicit = submits.filter(({ role }) => role === mode);
+  if (explicit.length === 1) return explicit[0]?.pairs ?? [];
+  if (explicit.length > 1) throw new Error(`Estructura PJ inválida: submit ${mode} ambiguo`);
+
+  const unclassified = submits.filter(({ role }) => role === undefined);
+  const semanticallyClassified = submits.length - unclassified.length;
+  if (semanticallyClassified > 0) {
+    if (submits.length === 2 && unclassified.length === 1) return unclassified[0]?.pairs ?? [];
+    throw new Error(`Estructura PJ inválida: submit ${mode} no identificado por rol`);
+  }
+
+  const legacySpecialized = submits.filter(({ pairs }) =>
+    pairs.some(
+      ([key, value]) =>
+        key === LEGACY_SPECIALIZED_MARKER[0] && value === LEGACY_SPECIALIZED_MARKER[1],
+    ),
+  );
+  if (legacySpecialized.length > 1) {
+    throw new Error("Estructura PJ inválida: fallback specialized ambiguo");
+  }
+  if (legacySpecialized.length === 1) {
+    if (mode === "specialized") return legacySpecialized[0]?.pairs ?? [];
+    const general = submits.filter((submit) => submit !== legacySpecialized[0]);
+    if (general.length === 1) return general[0]?.pairs ?? [];
+  }
+  if (mode === "general" && submits.length === 1) return submits[0]?.pairs ?? [];
+  throw new Error(`Estructura PJ inválida: submit ${mode} no identificado por rol`);
+}
+
+function parseSubmit(
+  $: CheerioAPI,
+  element: Parameters<CheerioAPI>[0],
+): { pairs: OrderedPairs; role: "general" | "specialized" | undefined } {
+  const submit = $(element);
+  const name = submit.attr("name");
+  if (name === undefined) throw new Error("Estructura PJ inválida: submit sin nombre");
   const onclick = (submit.attr("onclick") ?? "").replace(/\\(['"])/gu, "$1");
   const objectMatch = /document\.getElementById\([^)]*\)\s*,\s*\{([\s\S]*?)\}\s*,/u.exec(onclick);
   if (objectMatch?.[1] === undefined) {
     throw new Error("Estructura PJ inválida: parámetros del botón de búsqueda ausentes");
   }
+  const pairs: OrderedPairs = [[name, name]];
   const pairPattern = /['"]([^'"]+)['"]\s*:\s*['"]([^'"]*)['"]/gu;
   for (const match of objectMatch[1].matchAll(pairPattern)) {
     const key = match[1];
     const value = match[2];
     if (key !== undefined && value !== undefined && key !== name) pairs.push([key, value]);
   }
-  return pairs;
+  const declaredRole = pairs.find(([key]) => key === "busqueda")?.[1]?.toLowerCase();
+  const role =
+    declaredRole === "especializada"
+      ? "specialized"
+      : declaredRole === "general"
+        ? "general"
+        : undefined;
+  return { pairs, role };
 }
 
 export function buildSearchPayload(html: string, options: SearchPayloadOptions): OrderedPairs {
@@ -119,37 +168,15 @@ export function buildSearchPayload(html: string, options: SearchPayloadOptions):
   replaceControl(controls, `${PJ_FORM_ID}:buCorte`, options.court === "supreme" ? "1" : "2");
   if (options.includeAutoQualifiers === true) {
     const autoControl = `${PJ_FORM_ID}:${mode === "specialized" ? "varAutos2" : "varAutos"}`;
+    if ($(`[name="${autoControl}"]`).length !== 1) {
+      throw new Error(`Estructura PJ inválida: control de autos ausente para ${mode}`);
+    }
     const existing = controls.findIndex(([name]) => name === autoControl);
     if (existing < 0) controls.push([autoControl, "on"]);
     else controls[existing] = [autoControl, "on"];
   }
   controls.push(...extractSubmitParameters($, mode));
   return controls;
-}
-
-export function buildUniverseSearchPayload(viewState: string, court: PjCourt): OrderedPairs {
-  if (viewState.trim() === "") throw new Error("ViewState PJ vacío");
-  return [
-    [PJ_FORM_ID, PJ_FORM_ID],
-    [PJ_VIEW_STATE, viewState],
-    [`${PJ_FORM_ID}:tabpanel-value`, "especializada"],
-    [`${PJ_FORM_ID}:txtBusqueda`, ""],
-    [`${PJ_FORM_ID}:buCorte`, court === "supreme" ? "1" : "2"],
-    [`${PJ_FORM_ID}:buDistrito`, "0"],
-    [`${PJ_FORM_ID}:buEspecialidad`, "0"],
-    [`${PJ_FORM_ID}:buSala`, "0"],
-    [`${PJ_FORM_ID}:buPretensionDelitoSupValue`, ""],
-    [`${PJ_FORM_ID}:buPretensionDelitoSupInput`, ""],
-    [`${PJ_FORM_ID}:buPretensionValue`, ""],
-    [`${PJ_FORM_ID}:buPretensionInput`, ""],
-    [`${PJ_FORM_ID}:buPalabraClaveValue`, ""],
-    [`${PJ_FORM_ID}:buPalabraClaveInput`, ""],
-    [`${PJ_FORM_ID}:buNroExpediente`, ""],
-    [`${PJ_FORM_ID}:buAnio`, ""],
-    [`${PJ_FORM_ID}:varAutos2`, "on"],
-    [`${PJ_FORM_ID}:buOrden`, "21"],
-    [`${PJ_FORM_ID}:buOrdenForma`, "DESC"],
-  ];
 }
 
 function appendAjaxBase(payload: OrderedPairs, source: string): void {
@@ -218,4 +245,8 @@ export function encodePayload(payload: OrderedPairs): string {
   const encoded = new URLSearchParams();
   for (const [name, value] of payload) encoded.append(name, value);
   return encoded.toString();
+}
+
+export function fingerprintPayload(payload: OrderedPairs): string {
+  return createHash("sha256").update(encodePayload(payload)).digest("hex");
 }

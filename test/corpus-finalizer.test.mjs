@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7,6 +8,7 @@ import { finalizeCorpus, writeReceiptAtomic } from "../scripts/lib/corpus-finali
 
 const uuid = (suffix) => `00000000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
 const jsonl = (values) => `${values.map((value) => JSON.stringify(value)).join("\n")}\n`;
+const sha256 = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const membership = (partitionId, pass, token, identity) => ({
   schemaVersion: 1,
   type: "membership",
@@ -43,10 +45,34 @@ async function fixture(overrides = {}) {
       ? [{ schemaVersion: 1, eventId: uuid(210), documentId, state: "downloaded" }]
       : []),
   ]);
+  const planPartitions = ["A", "B"].map((id) => ({
+    id,
+    kind: "main",
+    search: { court: id, query: "" },
+  }));
+  const corpusPlanVersion = "test.r1";
+  const corpusPlan = {
+    schemaVersion: 1,
+    corpusPlanVersion,
+    queryHash: sha256({ version: corpusPlanVersion, partitions: planPartitions }),
+    commit: "a".repeat(40),
+    fingerprint: sha256({
+      schemaVersion: 1,
+      version: corpusPlanVersion,
+      partitions: planPartitions,
+    }),
+    partitions: planPartitions.map((partition) => ({
+      ...partition,
+      fingerprint: sha256(partition),
+    })),
+  };
   const metadata = {
     schemaVersion: 2,
-    commit: "a".repeat(40),
-    partitions: ["A", "B"],
+    commit: corpusPlan.commit,
+    corpusPlanVersion: corpusPlan.corpusPlanVersion,
+    queryHash: corpusPlan.queryHash,
+    corpusPlanFingerprint: corpusPlan.fingerprint,
+    partitions: corpusPlan.partitions.map(({ id }) => id),
     queryTotals: { A: { initial: 2, final: 2 }, B: { initial: 2, final: 2 } },
     publishedGlobalTotal: { initial: 3, final: 3 },
     notEnumerableWithReason: {
@@ -68,6 +94,7 @@ async function fixture(overrides = {}) {
       jsonl(overrides.manifest ?? manifest),
     ),
     writeFile(path.join(root, "run-receipt.json"), JSON.stringify(metadata)),
+    writeFile(path.join(root, "corpus-plan.json"), JSON.stringify(corpusPlan)),
     writeFile(
       path.join(root, "supervisor.log"),
       overrides.supervisor ??
@@ -181,6 +208,74 @@ test("rechaza convergencia declarada que no coincide con primeras apariciones", 
       "2026-07-16T11:00:00Z pass=2 complete=true new_memberships=1 partitions=2\n2026-07-16T11:00:01Z converged=true pass=2\n",
   });
   await assert.rejects(() => finalizeCorpus({ outputDir: root }), /new_memberships del supervisor/);
+});
+
+test("rechaza un recibo cuyo hash u orden no coincide con corpus-plan", async () => {
+  const hashMismatch = await fixture({ metadata: { queryHash: "b".repeat(64) } });
+  await assert.rejects(
+    () => finalizeCorpus({ outputDir: hashMismatch.root }),
+    /queryHash no coincide/,
+  );
+
+  const orderMismatch = await fixture({ metadata: { partitions: ["B", "A"] } });
+  await assert.rejects(
+    () => finalizeCorpus({ outputDir: orderMismatch.root }),
+    /orden exacto de corpus-plan/,
+  );
+});
+
+test("rechaza cualquier pendiente detail vigente aunque el supervisor declare convergencia", async () => {
+  const { root } = await fixture();
+  const failureId = uuid(901);
+  const documentId = uuid(1);
+  await writeFile(
+    path.join(root, "data", "failures.jsonl"),
+    jsonl([
+      {
+        schemaVersion: 1,
+        failureId,
+        phase: "detail",
+        partitionId: "A",
+        documentId,
+        page: 1,
+        classification: "network",
+        attempts: 3,
+        retryable: true,
+        message: "detalle incompleto",
+        resolution: "open",
+        occurredAt: "2026-07-16T10:00:00.000Z",
+      },
+    ]),
+  );
+
+  const receipt = await finalizeCorpus({ outputDir: root });
+  assert.equal(receipt.status, "FAIL");
+  assert.equal(receipt.inputs.openDetailFailures, 1);
+  assert.match(receipt.failureReasons.join(" "), /fallos detail abiertos/i);
+  assert.equal(JSON.stringify(receipt).includes(failureId), false);
+  assert.equal(JSON.stringify(receipt).includes(documentId), false);
+});
+
+test("rechaza eventos de failure que no cumplen el schema operativo", async () => {
+  const { root } = await fixture();
+  await writeFile(
+    path.join(root, "data", "failures.jsonl"),
+    jsonl([
+      {
+        schemaVersion: 1,
+        failureId: uuid(902),
+        phase: "detalle-mal-escrito",
+        classification: "network",
+        attempts: 1,
+        retryable: true,
+        message: "evento inválido",
+        resolution: "open",
+        occurredAt: "2026-07-16T10:00:00.000Z",
+      },
+    ]),
+  );
+
+  await assert.rejects(() => finalizeCorpus({ outputDir: root }), /fase de failure inválida/);
 });
 
 test("escribe el recibo atómicamente con permisos privados", async () => {

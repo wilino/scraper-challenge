@@ -49,6 +49,12 @@ export class PagePersistence {
     documents: readonly ScrapedDocument[],
     checkpoint: Checkpoint,
   ): Promise<number> {
+    const inserted = await this.persistDocuments(documents);
+    await this.#checkpoint.save(checkpoint);
+    return inserted;
+  }
+
+  public async persistDocuments(documents: readonly ScrapedDocument[]): Promise<number> {
     let inserted = 0;
     for (const document of documents) {
       if (this.#completedIds.has(document.documentId)) continue;
@@ -56,7 +62,6 @@ export class PagePersistence {
       await this.#completedIds.add(document.documentId);
       inserted += 1;
     }
-    await this.#checkpoint.save(checkpoint);
     return inserted;
   }
 

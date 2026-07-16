@@ -1,7 +1,9 @@
 import type { ScraperConfig } from "./config/env.js";
 import type { Checkpoint } from "./models/checkpoint.js";
 
-export type CommandName = "discover" | "download" | "retry-failed";
+import type { CorpusPartitionId } from "./sites/pj/corpus-plan.js";
+
+export type CommandName = "discover" | "download" | "retry-failed" | "retry-details";
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type StopReason = "natural_end" | "limit" | "max_pages" | "interrupted" | "failed";
 
@@ -10,6 +12,7 @@ export interface CliOptions {
   limit?: number;
   maxPages?: number;
   passNumber?: number;
+  partitionId?: CorpusPartitionId;
   logLevel?: LogLevel;
 }
 
@@ -52,12 +55,19 @@ export interface OperationSummary {
   stopReason: StopReason;
   definitiveFailures: number;
   corpusReconciled: boolean;
+  detailRetries?: {
+    selected: number;
+    resolved: number;
+    stillFailed: number;
+    notEligible: number;
+  };
 }
 
 export interface CliOperations {
   discover(options: CliOptions, context: CommandContext): Promise<OperationSummary>;
   download(options: CliOptions, context: CommandContext): Promise<OperationSummary>;
   retryFailed(options: CliOptions, context: CommandContext): Promise<OperationSummary>;
+  retryDetails(options: CliOptions, context: CommandContext): Promise<OperationSummary>;
   close?(): Promise<void>;
 }
 
@@ -106,6 +116,8 @@ export function createCommandHandler(operations: CliOperations) {
           return await operations.download(invocation.options, context);
         case "retry-failed":
           return await operations.retryFailed(invocation.options, context);
+        case "retry-details":
+          return await operations.retryDetails(invocation.options, context);
       }
     } finally {
       await operations.close?.();

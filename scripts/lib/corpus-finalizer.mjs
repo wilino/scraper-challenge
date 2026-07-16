@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
@@ -6,10 +7,150 @@ import readline from "node:readline";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const UUID_ANY = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/iu;
 const COMMIT = /^[0-9a-f]{40}$/u;
+const SHA256 = /^[0-9a-f]{64}$/u;
+const FAILURE_PHASES = new Set(["preflight", "discover", "detail", "download"]);
+const FAILURE_RESOLUTIONS = new Set(["open", "resolved", "abandoned"]);
+const FAILURE_CLASSIFICATIONS = new Set([
+  "access",
+  "network",
+  "timeout",
+  "rate_limit",
+  "http_permanent",
+  "structural",
+  "security",
+  "invalid_content",
+  "interrupted",
+]);
 
 const invariant = (condition, message) => {
   if (!condition) throw new Error(message);
 };
+
+const sha256 = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+function validateCorpusPlanArtifact(artifact) {
+  invariant(artifact?.schemaVersion === 1, "corpus-plan.schemaVersion inválido");
+  invariant(
+    typeof artifact.corpusPlanVersion === "string" && artifact.corpusPlanVersion,
+    "corpusPlanVersion inválido",
+  );
+  invariant(SHA256.test(artifact.queryHash ?? ""), "corpus-plan.queryHash inválido");
+  invariant(COMMIT.test(artifact.commit ?? ""), "corpus-plan.commit inválido");
+  invariant(SHA256.test(artifact.fingerprint ?? ""), "corpus-plan.fingerprint inválido");
+  invariant(
+    Array.isArray(artifact.partitions) && artifact.partitions.length > 0,
+    "corpus-plan sin particiones",
+  );
+  const partitions = artifact.partitions.map((partition) => {
+    invariant(
+      typeof partition?.id === "string" && partition.id,
+      "corpus-plan partitionId inválido",
+    );
+    invariant(typeof partition.kind === "string" && partition.kind, "corpus-plan kind inválido");
+    invariant(
+      partition.search !== null && typeof partition.search === "object",
+      "corpus-plan search inválido",
+    );
+    invariant(SHA256.test(partition.fingerprint ?? ""), "fingerprint de partición inválido");
+    const canonical = { id: partition.id, kind: partition.kind, search: partition.search };
+    invariant(
+      partition.fingerprint === sha256(canonical),
+      `fingerprint inválido para ${partition.id}`,
+    );
+    return canonical;
+  });
+  invariant(
+    new Set(partitions.map(({ id }) => id)).size === partitions.length,
+    "corpus-plan contiene particiones duplicadas",
+  );
+  invariant(
+    artifact.queryHash === sha256({ version: artifact.corpusPlanVersion, partitions }),
+    "corpus-plan.queryHash no corresponde al contenido",
+  );
+  invariant(
+    artifact.fingerprint ===
+      sha256({ schemaVersion: 1, version: artifact.corpusPlanVersion, partitions }),
+    "corpus-plan.fingerprint no corresponde al contenido",
+  );
+  return partitions;
+}
+
+function validateFailure(failure) {
+  invariant(failure?.schemaVersion === 1 && UUID.test(failure.failureId ?? ""), "failure inválido");
+  invariant(FAILURE_PHASES.has(failure.phase), "fase de failure inválida");
+  invariant(FAILURE_RESOLUTIONS.has(failure.resolution), "resolución de failure inválida");
+  invariant(
+    FAILURE_CLASSIFICATIONS.has(failure.classification),
+    "clasificación de failure inválida",
+  );
+  invariant(
+    Number.isInteger(failure.attempts) && failure.attempts > 0,
+    "attempts de failure inválido",
+  );
+  invariant(typeof failure.retryable === "boolean", "retryable de failure inválido");
+  invariant(typeof failure.message === "string" && failure.message, "message de failure inválido");
+  invariant(!Number.isNaN(Date.parse(failure.occurredAt ?? "")), "occurredAt de failure inválido");
+  if (failure.partitionId !== undefined)
+    invariant(
+      typeof failure.partitionId === "string" && failure.partitionId,
+      "partitionId de failure inválido",
+    );
+  if (failure.documentId !== undefined)
+    invariant(UUID.test(failure.documentId), "documentId de failure inválido");
+  if (failure.page !== undefined)
+    invariant(Number.isInteger(failure.page) && failure.page > 0, "page de failure inválido");
+  if (failure.status !== undefined)
+    invariant(
+      Number.isInteger(failure.status) && failure.status >= 100 && failure.status <= 599,
+      "status de failure inválido",
+    );
+  if (failure.code !== undefined)
+    invariant(typeof failure.code === "string" && failure.code, "code de failure inválido");
+  if (failure.retryAfterMs !== undefined)
+    invariant(
+      Number.isInteger(failure.retryAfterMs) && failure.retryAfterMs >= 0,
+      "retryAfterMs de failure inválido",
+    );
+  for (const [field, value] of [
+    ["nextRetryAt", failure.nextRetryAt],
+    ["resolvedAt", failure.resolvedAt],
+  ])
+    if (value !== undefined)
+      invariant(!Number.isNaN(Date.parse(value)), `${field} de failure inválido`);
+  if (failure.request !== undefined) validateFailureRequest(failure.request);
+  if (failure.phase === "detail")
+    invariant(UUID.test(failure.documentId ?? ""), "detail failure sin documentId");
+}
+
+function validateFailureRequest(request) {
+  invariant(
+    request !== null &&
+      typeof request === "object" &&
+      Object.keys(request).sort().join(",") === "method,url",
+    "request de failure inválido",
+  );
+  invariant(
+    request.method === "GET" && typeof request.url === "string",
+    "request de failure inválido",
+  );
+  let url;
+  try {
+    url = new URL(request.url);
+  } catch {
+    throw new Error("request.url de failure inválido");
+  }
+  const uuids = url.searchParams.getAll("uuid");
+  invariant(
+    url.origin === "https://jurisprudencia.pj.gob.pe" &&
+      url.pathname === "/jurisprudenciaweb/ServletDescarga" &&
+      [...url.searchParams.keys()].every((key) => key === "uuid") &&
+      uuids.length === 1 &&
+      UUID.test(uuids[0] ?? "") &&
+      url.username === "" &&
+      url.password === "",
+    "request.url de failure inseguro",
+  );
+}
 
 class DisjointSet {
   constructor(size) {
@@ -64,6 +205,15 @@ async function readJsonLines(file, visit) {
     }
   } catch (error) {
     input.destroy();
+    throw error;
+  }
+}
+
+async function readOptionalJsonLines(file, visit) {
+  try {
+    await readJsonLines(file, visit);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
     throw error;
   }
 }
@@ -143,16 +293,40 @@ export async function finalizeCorpus(options) {
     memberships: path.join(dataDir, "corpus-memberships.jsonl"),
     documents: path.join(dataDir, "documents.jsonl"),
     manifest: path.join(dataDir, "download-manifest.jsonl"),
+    failures: path.join(dataDir, "failures.jsonl"),
+    corpusPlan: path.join(outputDir, "corpus-plan.json"),
     metadata: path.resolve(options.metadataPath ?? path.join(outputDir, "run-receipt.json")),
     supervisor: path.resolve(options.supervisorLogPath ?? path.join(outputDir, "supervisor.log")),
     discovery: path.resolve(options.discoveryLogPath ?? path.join(outputDir, "discover.log")),
   };
+  const corpusPlan = await readJson(files.corpusPlan);
+  const corpusPartitions = validateCorpusPlanArtifact(corpusPlan);
   const metadata = await readJson(files.metadata);
   invariant(metadata.schemaVersion === 2, "run-receipt.schemaVersion inválido");
   invariant(COMMIT.test(metadata.commit ?? ""), "la corrida no está ligada a un commit");
   invariant(
     Array.isArray(metadata.partitions) && metadata.partitions.length > 0,
     "faltan particiones",
+  );
+  invariant(
+    metadata.commit === corpusPlan.commit,
+    "run-receipt.commit no coincide con corpus-plan",
+  );
+  invariant(
+    metadata.corpusPlanVersion === corpusPlan.corpusPlanVersion,
+    "run-receipt.corpusPlanVersion no coincide con corpus-plan",
+  );
+  invariant(
+    metadata.queryHash === corpusPlan.queryHash,
+    "run-receipt.queryHash no coincide con corpus-plan",
+  );
+  invariant(
+    metadata.corpusPlanFingerprint === corpusPlan.fingerprint,
+    "run-receipt.corpusPlanFingerprint no coincide con corpus-plan",
+  );
+  invariant(
+    JSON.stringify(metadata.partitions) === JSON.stringify(corpusPartitions.map(({ id }) => id)),
+    "run-receipt.partitions no conserva el orden exacto de corpus-plan",
   );
   const expectedPartitions = sorted(new Set(metadata.partitions));
   invariant(
@@ -271,6 +445,16 @@ export async function finalizeCorpus(options) {
   const manifestCounts = { pending: 0, downloaded: 0, failed: 0, no_pdf: 0 };
   for (const state of documents.values()) manifestCounts[state] += 1;
   documents.clear();
+
+  const currentFailures = new Map();
+  await readOptionalJsonLines(files.failures, (failure) => {
+    validateFailure(failure);
+    currentFailures.set(failure.failureId.toLowerCase(), failure);
+  });
+  const openDetailFailures = [...currentFailures.values()].filter(
+    (failure) => failure.phase === "detail" && failure.resolution === "open",
+  ).length;
+  currentFailures.clear();
 
   invariant(expectedPartitions.length <= 30, "demasiadas particiones para el agregador");
   const partitionBits = new Map(
@@ -442,18 +626,28 @@ export async function finalizeCorpus(options) {
     failureReasons.push(
       "publishedGlobalTotal no equivale a la unión enumerable más la diferencia demostrada.",
     );
+  if (openDetailFailures > 0)
+    failureReasons.push(
+      `Existen ${String(openDetailFailures)} fallos detail abiertos; el corpus no convergió.`,
+    );
 
   const receipt = {
     schemaVersion: 1,
     kind: "pj-corpus-final-reconciliation",
     generatedAt: new Date(options.now ?? Date.now()).toISOString(),
     commit: metadata.commit,
+    corpusPlan: {
+      version: corpusPlan.corpusPlanVersion,
+      queryHash: corpusPlan.queryHash,
+      fingerprint: corpusPlan.fingerprint,
+    },
     inputs: {
       membershipRecords,
       logicalMemberships: memberships.length,
       documents: documentCount,
       manifestEvents,
       manifestCurrentStates: manifestCounts,
+      openDetailFailures,
     },
     partitions: partitionOutputs,
     membershipRegions,
