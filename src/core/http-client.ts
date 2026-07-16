@@ -20,7 +20,7 @@ import { RequestMetrics, type HttpPhase } from "./request-metrics.js";
 import { parseRetryAfter, RetryPolicy } from "./retry-policy.js";
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
-const TRANSIENT_STATUSES = new Set([408, 502, 503, 504]);
+const TRANSIENT_STATUSES = new Set([408, 500, 502, 503, 504]);
 const PERMANENT_STATUSES = new Set([400, 401, 404, 410]);
 const TRANSIENT_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN"]);
 const TLS_CODES = new Set([

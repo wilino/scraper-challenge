@@ -197,6 +197,45 @@ describe("cliente HTTP PJ", () => {
     expect(clock.sleeps.filter((delay) => delay > 0)).toEqual([3000]);
   });
 
+  it("reintenta un 500 temporal durante detail y luego continúa", async () => {
+    nock(origin)
+      .post("/jurisprudenciaweb/faces/page/resultado.xhtml")
+      .reply(500, "backend temporalmente no disponible")
+      .post("/jurisprudenciaweb/faces/page/resultado.xhtml")
+      .reply(200, '<partial-response><update id="panel">ok</update></partial-response>', {
+        "Content-Type": "text/xml",
+      });
+
+    const response = await client().request({
+      url: "/jurisprudenciaweb/faces/page/resultado.xhtml",
+      method: "POST",
+      phase: "detail",
+      body: "detalle=1",
+      expectedAjaxUpdate: 'id="panel"',
+    });
+
+    expect(response.data).toContain("panel");
+    expect(response.attempts).toBe(2);
+    expect(nock.isDone()).toBe(true);
+  });
+
+  it("clasifica como transitorio un 500 que agota los reintentos", async () => {
+    const scope = nock(origin).get(pathName).twice().reply(500, "backend no disponible");
+
+    await expect(
+      client(new ImmediateClock(), { maxRetries: 1 }).request({
+        url: pathName,
+        phase: "discover",
+      }),
+    ).rejects.toMatchObject({
+      classification: "http_transient",
+      retryable: true,
+      status: 500,
+      attempt: 2,
+    });
+    expect(scope.isDone()).toBe(true);
+  });
+
   it("no emite una segunda descarga durante el cooldown global", async () => {
     const clock = new ControlledClock();
     let requests = 0;
