@@ -25,6 +25,7 @@ export interface PjDiscoveryAdapter {
     },
     signal?: AbortSignal,
   ): Promise<PjParsedResults>;
+  goToPage(page: number, signal?: AbortSignal): Promise<PjParsedResults>;
   nextPage(signal?: AbortSignal): Promise<PjParsedResults>;
   fetchDetail(
     record: PjListRecord,
@@ -61,9 +62,9 @@ export class PjDiscoverySource implements DiscoverySource<PjListRecord> {
         : { court, query: "", mode: "general" },
       signal,
     );
-    for (let page = 2; page <= resumePage; page += 1) {
+    if (resumePage > 1) {
       signal?.throwIfAborted();
-      parsed = await this.adapter.nextPage(signal);
+      parsed = await this.adapter.goToPage(resumePage, signal);
     }
     return { partitionId, parsed };
   }

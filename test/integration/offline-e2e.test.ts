@@ -96,6 +96,10 @@ class SyntheticPjAdapter implements PjDiscoveryAdapter {
     return Promise.reject(new Error("El fixture E2E tiene una página por partición"));
   }
 
+  public goToPage(): Promise<PjParsedResults> {
+    return Promise.reject(new Error("El fixture E2E tiene una página por partición"));
+  }
+
   public fetchDetail(record: PjListRecord) {
     this.enrichments += 1;
     const number = Number(record.nativeId.slice(-12));

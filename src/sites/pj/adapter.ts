@@ -146,6 +146,14 @@ export class PjAdapter {
     return this.#requestPage(current.pagination.currentPage + 1, true, signal);
   }
 
+  async goToPage(page: number, signal?: AbortSignal): Promise<PjParsedResults> {
+    if (!Number.isSafeInteger(page) || page < 1) {
+      throw new PjAdapterStateError(`Página PJ inválida: ${String(page)}`);
+    }
+    if (page === this.currentResults.pagination.currentPage) return this.currentResults;
+    return this.#requestPage(page, true, signal);
+  }
+
   async fetchDetail(record: PjListRecord, signal?: AbortSignal): Promise<CompletePjRecord> {
     const court = this.#court();
     const expectedPanel = DETAIL_POPUP_BY_COURT[court];
@@ -270,9 +278,7 @@ export class PjAdapter {
     if (search === undefined) throw new PjAdapterStateError("No existe búsqueda para recuperar");
     await this.bootstrap(signal);
     await this.search(search, signal);
-    for (let target = 2; target <= page; target += 1) {
-      await this.#requestPage(target, false, signal);
-    }
+    if (page > 1) await this.#requestPage(page, false, signal);
   }
 
   #court(): PjCourt {

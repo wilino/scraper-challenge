@@ -12,6 +12,7 @@ import type {
 import { HttpRequestError } from "../../src/core/http-errors.js";
 import { createLogger } from "../../src/core/logger.js";
 import { PjAdapter, type PjHttpTransport } from "../../src/sites/pj/adapter.js";
+import { PjDiscoverySource } from "../../src/sites/pj/discovery-source.js";
 
 const fixture = async (name: string): Promise<string> =>
   readFile(new URL(`../fixtures/pj/${name}`, import.meta.url), "utf8");
@@ -74,6 +75,15 @@ function distinctRecordsAtWrongPage(page2: string, viewState = "WRONG_PAGE_VIEWS
     .replace("FIXTURE_VIEWSTATE_2", viewState);
 }
 
+function retargetPartial(page2: string, page: number, marker: string): string {
+  return page2
+    .replaceAll('data-current-page="2"', `data-current-page="${String(page)}"`)
+    .replaceAll('class="rf-ds-act">2<', `class="rf-ds-act">${String(page)}<`)
+    .replaceAll('"currentPage":2', `"currentPage":${String(page)}`)
+    .replaceAll("FIXTURE_VIEWSTATE_2", `FIXTURE_VIEWSTATE_${String(page)}`)
+    .replace("Segunda página anonimizada", marker);
+}
+
 class QueueTransport implements PjHttpTransport {
   readonly requests: ControlledRequest[] = [];
   readonly preflight = vi.fn(async () => {
@@ -115,6 +125,34 @@ class QueueTransport implements PjHttpTransport {
 }
 
 describe("flujo HTTP stateful del adaptador PJ", () => {
+  it("reanuda en la página 12 mediante un solo salto directo", async () => {
+    const [initial, page1, page2] = await Promise.all([
+      fixture("initial.html"),
+      fixture("search-page-1.html"),
+      fixture("partial-page-2.xml"),
+    ]);
+    const http = new QueueTransport([
+      response(initial),
+      response(page1),
+      response(retargetPartial(page2, 12, "salto directo 12"), "text/xml;charset=UTF-8"),
+    ]);
+    const adapter = new PjAdapter(config, {
+      http,
+      logger: createLogger({ runId: "direct-resume-test", level: "silent" }),
+    });
+    const source = new PjDiscoverySource(adapter);
+
+    const resumed = await source.openPartition("superior", 12);
+
+    expect(resumed.parsed.pagination.currentPage).toBe(12);
+    expect(http.requests.map(({ page }) => page)).toEqual([undefined, 1, 12]);
+    const pageRequests = http.requests.filter(
+      ({ phase, page }) => phase === "discover" && page === 12,
+    );
+    expect(pageRequests).toHaveLength(1);
+    expect(String(pageRequests[0]?.body)).toContain("formBuscador%3Adata1%3Apage=12");
+  });
+
   it("hace bootstrap, búsqueda, página 2 y detalle con el estado inmediatamente anterior", async () => {
     const [initial, page1, page2, detail] = await Promise.all([
       fixture("initial.html"),
@@ -312,5 +350,46 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
     expect(adapter.currentResults.records.map(({ nativeId }) => nativeId)).toEqual(
       first.records.map(({ nativeId }) => nativeId),
     );
+  });
+
+  it("recupera el target N posicionándose directamente en N-1 y reintentando N", async () => {
+    const [initial, page1, page2] = await Promise.all([
+      fixture("initial.html"),
+      fixture("search-page-1.html"),
+      fixture("partial-page-2.xml"),
+    ]);
+    const recoveredPage1 = page1.replaceAll("FIXTURE_VIEWSTATE_1", "RECOVERED_VIEWSTATE_1");
+    const wrongPage = retargetPartial(page2, 1, "target incorrecto").replace(
+      "FIXTURE_VIEWSTATE_1",
+      "WRONG_TARGET_VIEWSTATE",
+    );
+    const http = new QueueTransport([
+      response(initial),
+      response(page1),
+      response(wrongPage, "text/xml;charset=UTF-8"),
+      response(initial),
+      response(recoveredPage1),
+      response(retargetPartial(page2, 11, "posición recuperada 11"), "text/xml;charset=UTF-8"),
+      response(retargetPartial(page2, 12, "target recuperado 12"), "text/xml;charset=UTF-8"),
+    ]);
+    const adapter = new PjAdapter(config, {
+      http,
+      logger: createLogger({ runId: "direct-target-recovery-test", level: "silent" }),
+    });
+
+    await adapter.search({ court: "supreme", query: "derecho" });
+    const recovered = await adapter.goToPage(12);
+
+    expect(recovered.pagination.currentPage).toBe(12);
+    expect(http.requests.filter(({ page }) => page !== undefined).map(({ page }) => page)).toEqual([
+      1, 12, 1, 11, 12,
+    ]);
+    const paginationBodies = http.requests
+      .filter(({ page }) => page === 11 || page === 12)
+      .map(({ body }) => String(body));
+    expect(paginationBodies).toHaveLength(3);
+    expect(paginationBodies[0]).toContain("formBuscador%3Adata1%3Apage=12");
+    expect(paginationBodies[1]).toContain("formBuscador%3Adata1%3Apage=11");
+    expect(paginationBodies[2]).toContain("formBuscador%3Adata1%3Apage=12");
   });
 });
