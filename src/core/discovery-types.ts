@@ -109,6 +109,18 @@ export class DiscoveryConfigurationError extends Error {
   }
 }
 
+/**
+ * Indica que el adaptador perdió su sesión stateful y no pudo restaurarla.
+ * El orquestador debe detenerse sin confirmar la fila actual: una ejecución
+ * posterior con `--resume` reconstruirá la sesión desde el último checkpoint.
+ */
+export class DiscoverySessionStateError extends Error {
+  public constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "DiscoverySessionStateError";
+  }
+}
+
 export class DiscoveryStopError extends Error {
   public constructor(
     public readonly reason: FailedTermination,

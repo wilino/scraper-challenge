@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 
 import type { ScraperConfig } from "../../config/env.js";
+import { DiscoverySessionStateError } from "../../core/discovery-types.js";
 import { HttpRequestError } from "../../core/http-errors.js";
 import {
   PjHttpClient,
@@ -44,9 +45,9 @@ export interface CompletePjRecord {
   merged: ReturnType<typeof mergeListAndDetail>;
 }
 
-export class PjAdapterStateError extends Error {
-  constructor(message: string) {
-    super(message);
+export class PjAdapterStateError extends DiscoverySessionStateError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "PjAdapterStateError";
   }
 }
@@ -176,6 +177,12 @@ export class PjAdapter {
     try {
       return await this.#fetchDetailOnce(record, page, signal);
     } catch (firstError: unknown) {
+      if (isInterruption(firstError, signal)) throw firstError;
+      let restoredInvalidState = false;
+      if (!this.#isReadyAtPage(page)) {
+        await this.#restorePageOrThrow(page, firstError, signal);
+        restoredInvalidState = true;
+      }
       if (!isRecoverableDetailSessionFailure(firstError)) throw firstError;
 
       this.#logger.warn(
@@ -188,29 +195,16 @@ export class PjAdapter {
         },
         "Detalle PJ agotó sus reintentos; reconstruyendo la sesión antes de reintentarlo una vez",
       );
-      await this.#recoverToPage(page, signal);
+      if (!restoredInvalidState) await this.#restorePageOrThrow(page, firstError, signal);
 
       try {
         return await this.#fetchDetailOnce(record, page, signal);
       } catch (secondError: unknown) {
-        if (!isRecoverableDetailSessionFailure(secondError)) throw secondError;
-        try {
-          await this.#recoverToPage(page, signal);
-        } catch (recoveryError: unknown) {
-          if (isInterruption(recoveryError, signal)) throw recoveryError;
-          this.#logger.warn(
-            {
-              documentId: record.nativeId,
-              page,
-              errorName: recoveryError instanceof Error ? recoveryError.name : "Error",
-              classification:
-                recoveryError instanceof HttpRequestError
-                  ? recoveryError.classification
-                  : "unknown",
-            },
-            "No se pudo reconstruir la sesión tras el segundo fallo de detalle",
-          );
+        if (isInterruption(secondError, signal)) throw secondError;
+        if (!this.#isReadyAtPage(page) || isRecoverableDetailSessionFailure(secondError)) {
+          await this.#restorePageOrThrow(page, secondError, signal);
         }
+        if (!isRecoverableDetailSessionFailure(secondError)) throw secondError;
         this.#logger.warn(
           {
             documentId: record.nativeId,
@@ -357,6 +351,28 @@ export class PjAdapter {
     await this.bootstrap(signal);
     await this.search(search, signal);
     if (page > 1) await this.#requestPage(page, false, signal);
+  }
+
+  #isReadyAtPage(page: number): boolean {
+    return this.#results?.pagination.currentPage === page;
+  }
+
+  async #restorePageOrThrow(page: number, cause: unknown, signal?: AbortSignal): Promise<void> {
+    try {
+      await this.#recoverToPage(page, signal);
+    } catch (recoveryError: unknown) {
+      if (isInterruption(recoveryError, signal)) throw recoveryError;
+      throw new PjAdapterStateError(
+        `No se pudo restaurar la sesión PJ en la página ${String(page)}`,
+        { cause: recoveryError },
+      );
+    }
+    if (!this.#isReadyAtPage(page)) {
+      throw new PjAdapterStateError(
+        `La sesión PJ restaurada no quedó en la página ${String(page)}`,
+        { cause },
+      );
+    }
   }
 
   #court(): PjCourt {

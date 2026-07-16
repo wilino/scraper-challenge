@@ -337,6 +337,90 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
     expect(http.requests.filter(({ phase }) => phase === "detail")).toHaveLength(2);
   });
 
+  it("detiene la fila sin ocultar un fallo al restaurar la sesión de detalle", async () => {
+    const [initial, page1, page2] = await Promise.all([
+      fixture("initial.html"),
+      fixture("search-page-1.html"),
+      fixture("partial-page-2.xml"),
+    ]);
+    const recoveryFailure = new HttpRequestError("búsqueda de recuperación agotada", {
+      classification: "http_transient",
+      retryable: true,
+      safePath: config.resultsPath,
+      status: 500,
+      attempt: config.maxRetries + 1,
+    });
+    const http = new QueueTransport([
+      response(initial),
+      response(page1),
+      response(page2, "text/xml;charset=UTF-8"),
+      exhaustedDetail500("detalle agotado"),
+      response(initial),
+      recoveryFailure,
+    ]);
+    const adapter = new PjAdapter(config, {
+      http,
+      logger: createLogger({ runId: "fatal-detail-recovery-test", level: "silent" }),
+    });
+
+    await adapter.search({ court: "supreme", query: "derecho" });
+    const second = await adapter.nextPage();
+    const record = second.records[0];
+    if (record === undefined) throw new Error("Fixture sin registro en página 2");
+
+    await expect(adapter.fetchDetail(record)).rejects.toMatchObject({
+      name: "PjAdapterStateError",
+      message: "No se pudo restaurar la sesión PJ en la página 2",
+      cause: recoveryFailure,
+    });
+    expect(http.requests.filter(({ phase }) => phase === "detail")).toHaveLength(1);
+  });
+
+  it("promueve a fatal un fallo de cleanup después del segundo 500", async () => {
+    const [initial, page1, page2] = await Promise.all([
+      fixture("initial.html"),
+      fixture("search-page-1.html"),
+      fixture("partial-page-2.xml"),
+    ]);
+    const recoveredPage1 = page1.replaceAll("FIXTURE_VIEWSTATE_1", "RECOVERED_VIEWSTATE_1");
+    const recoveredPage2 = page2.replaceAll("FIXTURE_VIEWSTATE_2", "RECOVERED_VIEWSTATE_2");
+    const cleanupFailure = new HttpRequestError("cleanup de búsqueda agotado", {
+      classification: "http_transient",
+      retryable: true,
+      safePath: config.resultsPath,
+      status: 500,
+      attempt: config.maxRetries + 1,
+    });
+    const http = new QueueTransport([
+      response(initial),
+      response(page1),
+      response(page2, "text/xml;charset=UTF-8"),
+      exhaustedDetail500("primer 500 agotado"),
+      response(initial),
+      response(recoveredPage1),
+      response(recoveredPage2, "text/xml;charset=UTF-8"),
+      exhaustedDetail500("segundo 500 agotado"),
+      response(initial),
+      cleanupFailure,
+    ]);
+    const adapter = new PjAdapter(config, {
+      http,
+      logger: createLogger({ runId: "fatal-second-detail-cleanup-test", level: "silent" }),
+    });
+
+    await adapter.search({ court: "supreme", query: "derecho" });
+    const second = await adapter.nextPage();
+    const record = second.records[0];
+    if (record === undefined) throw new Error("Fixture sin registro en página 2");
+
+    await expect(adapter.fetchDetail(record)).rejects.toMatchObject({
+      name: "PjAdapterStateError",
+      message: "No se pudo restaurar la sesión PJ en la página 2",
+      cause: cleanupFailure,
+    });
+    expect(http.requests.filter(({ phase }) => phase === "detail")).toHaveLength(2);
+  });
+
   it("descarta el ViewState inválido, repite la búsqueda y se reposiciona una sola vez", async () => {
     const [initial, page1, page2] = await Promise.all([
       fixture("initial.html"),

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { DiscoveryOrchestrator } from "../../src/core/discovery-orchestrator.js";
 import { HttpRequestError } from "../../src/core/http-errors.js";
 import {
+  DiscoverySessionStateError,
   DiscoveryStopError,
   type DiscoveryPage,
   type DiscoverySource,
@@ -164,6 +165,45 @@ function orchestrator(
 }
 
 describe("orquestador de descubrimiento", () => {
+  it("no confirma ni registra como fallo individual una sesión stateful irrecuperable", async () => {
+    const root = await output();
+    const source = new FakeSource({
+      supreme: [page("supreme", 1, 1, 3, [record(1, 0), record(2, 1), record(3, 2)])],
+    });
+    const enrich = source.enrichRecord.bind(source);
+    const attempted: string[] = [];
+    source.enrichRecord = (item, context) => {
+      attempted.push(item.nativeId);
+      return item.nativeId === uuid(2)
+        ? Promise.reject(new DiscoverySessionStateError("sesión PJ irrecuperable"))
+        : enrich(item, context);
+    };
+
+    await expect(orchestrator(source, root).run()).rejects.toThrow("sesión PJ irrecuperable");
+    expect(attempted).toEqual([uuid(1), uuid(2)]);
+    expect(
+      JSON.parse(await readFile(path.join(root, "state/checkpoint.json"), "utf8")),
+    ).toMatchObject({ page: 1, confirmedRow: 1 });
+    await expect(readFile(path.join(root, "data/failures.jsonl"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(
+      (await readFile(path.join(root, "data/corpus-memberships.jsonl"), "utf8")).trim().split("\n"),
+    ).toHaveLength(1);
+
+    const resumed = new FakeSource({
+      supreme: [page("supreme", 1, 1, 3, [record(1, 0), record(2, 1), record(3, 2)])],
+    });
+    await expect(orchestrator(resumed, root).run({ resume: true })).resolves.toMatchObject({
+      uniqueDocuments: 2,
+      detailFailures: 0,
+    });
+    expect(resumed.enriched).toBe(2);
+    expect(
+      (await readFile(path.join(root, "data/documents.jsonl"), "utf8")).trim().split("\n"),
+    ).toHaveLength(3);
+  });
+
   it("recorre fixtures multipágina secuencialmente y genera documentos y manifest", async () => {
     const root = await output();
     const source = new FakeSource({

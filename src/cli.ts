@@ -15,10 +15,13 @@ import {
 } from "./cli-contract.js";
 import { defaultCliOperations } from "./cli-operations.js";
 import { HttpRequestError, PreflightError } from "./core/http-errors.js";
-import { DiscoveryConfigurationError, DiscoveryStopError } from "./core/discovery-types.js";
+import {
+  DiscoveryConfigurationError,
+  DiscoverySessionStateError,
+  DiscoveryStopError,
+} from "./core/discovery-types.js";
 import { PjStructuralError } from "./sites/pj/parser.js";
 import { PjHistoricalStructuralError } from "./sites/pj/historical-parser.js";
-import { PjAdapterStateError } from "./sites/pj/adapter.js";
 
 const COMMANDS = new Set<CommandName>(["discover", "download", "retry-failed"]);
 const LOG_LEVELS = new Set<LogLevel>(["debug", "info", "warn", "error"]);
@@ -145,7 +148,7 @@ export function exitCodeForError(error: unknown): number {
   if (
     error instanceof PjStructuralError ||
     error instanceof PjHistoricalStructuralError ||
-    error instanceof PjAdapterStateError
+    error instanceof DiscoverySessionStateError
   )
     return 4;
   if (error instanceof DiscoveryStopError) return error.reason === "interrupted" ? 130 : 4;

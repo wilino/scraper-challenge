@@ -20,6 +20,7 @@ import {
 } from "../../src/cli-operations.js";
 import type { ScraperConfig } from "../../src/config/env.js";
 import type { CompactDownloadState } from "../../src/core/download-manifest-store.js";
+import { DiscoverySessionStateError } from "../../src/core/discovery-types.js";
 import { FailureStore } from "../../src/core/failure-store.js";
 import { HttpRequestError, PreflightError } from "../../src/core/http-errors.js";
 import { JsonlStore } from "../../src/core/jsonl-store.js";
@@ -492,6 +493,7 @@ describe("resume, señales y exit codes", () => {
     expect(exitCodeForError(new CliUsageError("uso"))).toBe(2);
     expect(exitCodeForError(new PreflightError("access", "Perú", "/inicio"))).toBe(3);
     expect(exitCodeForError(new PjStructuralError("estructura"))).toBe(4);
+    expect(exitCodeForError(new DiscoverySessionStateError("sesión irrecuperable"))).toBe(4);
     expect(exitCodeForError(new Error("general"))).toBe(1);
     expect(exitCodeForError(new CliInterruptedError("SIGTERM"))).toBe(143);
   });

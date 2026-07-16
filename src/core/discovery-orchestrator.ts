@@ -6,6 +6,7 @@ import { FailureStore } from "./failure-store.js";
 import { HttpRequestError } from "./http-errors.js";
 import {
   DiscoveryConfigurationError,
+  DiscoverySessionStateError,
   DiscoveryStopError,
   type DiscoveryPage,
   type DiscoveryRecord,
@@ -224,6 +225,7 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
             });
           } catch (error: unknown) {
             if (isInterruption(error, options.signal)) throw error;
+            if (error instanceof DiscoverySessionStateError) throw error;
             const membership = await this.#recordMembership(partitionId, record);
             if (membership) summary.newCorpusMemberships += 1;
             await this.#recordDetailFailure(
