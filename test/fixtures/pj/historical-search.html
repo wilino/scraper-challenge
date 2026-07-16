@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- origin: synthetic-contractual -->
+<html><body>
+<form id="formBusqueda" method="post" action="/jurisprudenciaweb/faces/page/resolucion-busqueda-especializada-superior.xhtml">
+  <input type="hidden" name="formBusqueda" value="formBusqueda">
+  <input type="hidden" name="javax.faces.ViewState" value="HIST-VS-0">
+  <input name="formBusqueda:txtBusqueda" value="">
+  <input type="hidden" name="formBusqueda:cmbCorte" value="2">
+  <input id="formBusqueda:cmbCorteInput" name="formBusqueda:cmbCorteInput" value="Corte Superior de Justicia - Lima">
+  <input type="hidden" name="formBusqueda:cmbInstancia" value="2">
+  <input id="formBusqueda:cmbInstanciaInput" name="formBusqueda:cmbInstanciaInput" value="Sala Superior" disabled>
+  <input type="hidden" name="formBusqueda:cmbEspecialidad" value="2">
+  <input id="formBusqueda:cmbEspecialidadInput" name="formBusqueda:cmbEspecialidadInput" value="Comercial" disabled>
+  <input type="hidden" name="formBusqueda:buAnio" value="">
+  <input id="formBusqueda:buAnioInput" name="formBusqueda:buAnioInput" value="Todos">
+  <input type="submit" name="formBusqueda:dynamicSearch" value="Buscar" onclick="RichFaces.ajax('formBusqueda:dynamicSearch',event,{'parameters':{'forward':'buscar','busqueda':'especializada','formBusqueda:order':'4','formBusqueda:direction':'ASC'}});return false;">
+</form>
+</body></html>

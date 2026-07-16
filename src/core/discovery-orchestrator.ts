@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { DownloadManifestStore } from "./download-manifest-store.js";
+import { CorpusMembershipStore } from "./corpus-membership-store.js";
 import { FailureStore } from "./failure-store.js";
 import {
   DiscoveryConfigurationError,
@@ -20,6 +21,7 @@ import {
   type DownloadManifestEvent,
 } from "../models/download-manifest.js";
 import { scrapedDocumentSchema, type ScrapedDocument } from "../models/document.js";
+import type { CorpusIdentity } from "../models/corpus-membership.js";
 import type { ScrapeFailure } from "../models/failure.js";
 
 export interface DiscoveryOrchestratorOptions<TRecord extends DiscoveryRecord = DiscoveryRecord> {
@@ -29,6 +31,8 @@ export interface DiscoveryOrchestratorOptions<TRecord extends DiscoveryRecord = 
   queryHash: string;
   partitions: readonly string[];
   corpusReconciliationPassed?: boolean;
+  passNumber?: number;
+  membershipStore?: CorpusMembershipStore;
   now?: () => Date;
   uuid?: () => string;
 }
@@ -43,6 +47,7 @@ interface MutablePartitionSummary {
   uniqueMemberships: number;
   duplicateMemberships: number;
   newDocuments: number;
+  newCorpusMemberships: number;
   globalDuplicates: number;
   termination?: SuccessfulTermination;
 }
@@ -56,6 +61,8 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
   readonly #queryHash: string;
   readonly #partitions: readonly string[];
   readonly #corpusReconciliationPassed: boolean;
+  readonly #passNumber: number;
+  readonly #memberships: CorpusMembershipStore;
   readonly #now: () => Date;
   readonly #uuid: () => string;
 
@@ -75,6 +82,13 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
     this.#queryHash = options.queryHash;
     this.#partitions = [...options.partitions];
     this.#corpusReconciliationPassed = options.corpusReconciliationPassed ?? false;
+    this.#passNumber = options.passNumber ?? 1;
+    if (!Number.isInteger(this.#passNumber) || this.#passNumber < 1) {
+      throw new Error("El número de pasada debe ser un entero positivo");
+    }
+    this.#memberships =
+      options.membershipStore ??
+      new CorpusMembershipStore(`${options.outputDirectory}/data/corpus-memberships.jsonl`);
     this.#now = options.now ?? (() => new Date());
     this.#uuid = options.uuid ?? randomUUID;
     checkpointSchema.shape.queryHash.parse(options.queryHash);
@@ -85,6 +99,9 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
     validateLimit(options.maxPages, "maxPages");
     throwIfAborted(options.signal);
     const storedDocuments = await this.#persistence.initialize();
+    const documentsByIdentity = new Map<string, ScrapedDocument>();
+    for (const document of storedDocuments) indexDocumentIdentities(documentsByIdentity, document);
+    await this.#memberships.initialize();
     const manifestStates = new Map(await this.#manifest.currentStates());
     for (const document of storedDocuments) await this.#ensureManifest(document, manifestStates);
     const checkpoint = options.resume === true ? await this.#compatibleCheckpoint() : null;
@@ -161,7 +178,10 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
             runTermination = "limit";
             return finalSummary(summaries, runTermination, false);
           }
-          if (this.#persistence.hasDocument(record.nativeId)) {
+          const storedDocument = documentsByIdentity.get(record.nativeId);
+          if (storedDocument !== undefined) {
+            const membership = await this.#recordMembership(partitionId, record, storedDocument);
+            if (membership) summary.newCorpusMemberships += 1;
             summary.globalDuplicates += 1;
             await this.#persistence.confirmCheckpoint(
               this.#checkpoint(partitionId, page.parsed.pagination.currentPage, row + 1),
@@ -182,12 +202,15 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
             throw error;
           }
           validateDocument(document, record, page, row);
+          const membership = await this.#recordMembership(partitionId, record, document);
+          if (membership) summary.newCorpusMemberships += 1;
           await this.#ensureManifest(document, manifestStates);
           const inserted = await this.#persistence.confirmDocuments(
             [document],
             this.#checkpoint(partitionId, page.parsed.pagination.currentPage, row + 1),
           );
           if (inserted === 1) {
+            indexDocumentIdentities(documentsByIdentity, document);
             summary.newDocuments += 1;
             totalNewDocuments += 1;
           } else {
@@ -280,6 +303,26 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
     states.set(document.documentId, event);
   }
 
+  async #recordMembership(
+    partitionId: string,
+    record: TRecord,
+    document: ScrapedDocument,
+  ): Promise<boolean> {
+    const sourceIdentity = this.#source.membershipIdentity?.(record) ?? {
+      documentUuid: record.nativeId,
+    };
+    const membership = await this.#memberships.record({
+      schemaVersion: 1,
+      type: "membership",
+      partitionId,
+      pass: this.#passNumber,
+      membershipToken: record.nativeId,
+      identity: mergeCorpusIdentity(sourceIdentity, document),
+      observedAt: this.#now().toISOString(),
+    });
+    return membership.newForPartition;
+  }
+
   async #recordDetailFailure(
     documentId: string,
     partitionId: string,
@@ -308,6 +351,35 @@ export class DiscoveryOrchestrator<TRecord extends DiscoveryRecord = DiscoveryRe
 function validateLimit(value: number | undefined, name: string): void {
   if (value !== undefined && (!Number.isInteger(value) || value < 1))
     throw new Error(`${name} debe ser un entero positivo`);
+}
+
+function mergeCorpusIdentity(source: CorpusIdentity, document: ScrapedDocument): CorpusIdentity {
+  const pdfUuid = pdfUuidFromDocument(document);
+  if (pdfUuid === undefined) return source;
+  return { ...source, pdfUuid };
+}
+
+function pdfUuidFromDocument(document: ScrapedDocument): string | undefined {
+  if (document.pdf.state !== "pending") return undefined;
+  const pdfUuid = new URL(document.pdf.request.url).searchParams.get("uuid")?.toLowerCase();
+  return pdfUuid !== undefined &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(pdfUuid)
+    ? pdfUuid
+    : undefined;
+}
+
+function indexDocumentIdentities(
+  index: Map<string, ScrapedDocument>,
+  document: ScrapedDocument,
+): void {
+  for (const identity of [document.documentId, pdfUuidFromDocument(document)]) {
+    if (identity === undefined) continue;
+    const previous = index.get(identity);
+    if (previous !== undefined && previous.documentId !== document.documentId) {
+      throw new DiscoveryConfigurationError("Dos documentos persistidos comparten identidad PDF");
+    }
+    index.set(identity, document);
+  }
 }
 
 function classifyDetailFailure(error: unknown): ScrapeFailure["classification"] {
@@ -349,6 +421,7 @@ function newPartitionSummary(partitionId: string, page: DiscoveryPage): MutableP
     uniqueMemberships: 0,
     duplicateMemberships: 0,
     newDocuments: 0,
+    newCorpusMemberships: 0,
     globalDuplicates: 0,
   };
 }

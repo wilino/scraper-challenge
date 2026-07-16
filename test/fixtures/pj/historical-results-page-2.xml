@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- origin: synthetic-contractual -->
+<partial-response><changes>
+  <update id="formBusqueda:panel"><![CDATA[
+    <div id="formBusqueda:panel"><div id="formBusqueda:repeat:5"><span>EXP-SYN-6</span><a href="/jurisprudenciaweb/ServletDescarga?uuid=00000000-0000-4000-8000-000000000106"><img src="pdf.png" alt="PDF"></a></div></div>
+  ]]></update>
+  <update id="formBusqueda:dynamicScroller"><![CDATA[
+    <div id="formBusqueda:dynamicScroller"></div><script>new RichFaces.ui.DataScroller("formBusqueda:dynamicScroller", {"currentPage":2,"maxValue":2});</script>
+  ]]></update>
+  <update id="javax.faces.ViewState"><![CDATA[HIST-VS-2]]></update>
+</changes></partial-response>

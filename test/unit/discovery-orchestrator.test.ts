@@ -63,13 +63,21 @@ function page(
 
 class FakeSource implements DiscoverySource {
   readonly #pages: Readonly<Record<string, DiscoveryPage[]>>;
+  readonly #pdfUuid?: string;
+  readonly #pdfIdentityTokens: ReadonlySet<string>;
   active = 0;
   maxActive = 0;
   enriched = 0;
   opened: [string, number][] = [];
 
-  public constructor(pages: Readonly<Record<string, DiscoveryPage[]>>) {
+  public constructor(
+    pages: Readonly<Record<string, DiscoveryPage[]>>,
+    pdfUuid?: string,
+    pdfIdentityTokens: ReadonlySet<string> = new Set(),
+  ) {
     this.#pages = pages;
+    this.#pdfUuid = pdfUuid;
+    this.#pdfIdentityTokens = pdfIdentityTokens;
   }
 
   public preflight(): Promise<void> {
@@ -103,7 +111,16 @@ class FakeSource implements DiscoverySource {
       discoveredAt: "2026-07-16T00:00:00.000Z",
       caseNumber: item.normalized.caseNumber,
       metadata: { list: item.metadata, detail: { exclusivo: ["detalle"] }, unknownFields: {} },
-      pdf: { state: "no_pdf", reason: "not_advertised" },
+      pdf:
+        this.#pdfUuid === undefined
+          ? { state: "no_pdf", reason: "not_advertised" }
+          : {
+              state: "pending",
+              request: {
+                method: "GET",
+                url: `https://jurisprudencia.pj.gob.pe/jurisprudenciaweb/ServletDescarga?uuid=${this.#pdfUuid}`,
+              },
+            },
     };
   }
 
@@ -115,13 +132,24 @@ class FakeSource implements DiscoverySource {
       ) ?? null,
     );
   }
+
+  public membershipIdentity(item: PjListRecord): { documentUuid: string } | { pdfUuid: string } {
+    return this.#pdfIdentityTokens.has(item.nativeId)
+      ? { pdfUuid: item.nativeId }
+      : { documentUuid: item.nativeId };
+  }
 }
 
 async function output(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "pj-discovery-"));
 }
 
-function orchestrator(source: DiscoverySource, outputDirectory: string, partitions = ["supreme"]) {
+function orchestrator(
+  source: DiscoverySource,
+  outputDirectory: string,
+  partitions = ["supreme"],
+  passNumber = 1,
+) {
   return new DiscoveryOrchestrator({
     source,
     outputDirectory,
@@ -129,6 +157,7 @@ function orchestrator(source: DiscoverySource, outputDirectory: string, partitio
     queryHash: "a".repeat(64),
     partitions,
     corpusReconciliationPassed: true,
+    passNumber,
     now: () => new Date("2026-07-16T00:00:00.000Z"),
   });
 }
@@ -159,6 +188,65 @@ describe("orquestador de descubrimiento", () => {
     expect(
       (await readFile(path.join(root, "data/download-manifest.jsonl"), "utf8")).trim().split("\n"),
     ).toHaveLength(3);
+  });
+
+  it("persiste el alias PDF y lo recupera sin enriquecer otra vez en la siguiente pasada", async () => {
+    const root = await output();
+    const pages = { supreme: [page("supreme", 1, 1, 1, [record(301, 0)])] };
+    const pdfUuid = uuid(9301);
+    const firstSource = new FakeSource(pages, pdfUuid);
+    await orchestrator(firstSource, root).run();
+
+    const secondSource = new FakeSource(pages);
+    await orchestrator(secondSource, root, ["supreme"], 2).run();
+
+    expect(secondSource.enriched).toBe(0);
+    const memberships = (await readFile(path.join(root, "data/corpus-memberships.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { pass: number; identity: Record<string, string> });
+    expect(memberships).toHaveLength(2);
+    expect(memberships[1]).toMatchObject({
+      pass: 2,
+      identity: { documentUuid: uuid(301), pdfUuid },
+    });
+  });
+
+  it("reutiliza un documento principal cuando la partición histórica llega por su UUID PDF", async () => {
+    const root = await output();
+    const documentUuid = uuid(401);
+    const pdfUuid = uuid(9401);
+    const source = new FakeSource(
+      {
+        supreme: [page("supreme", 1, 1, 1, [record(401, 0)])],
+        historical: [page("historical", 1, 1, 1, [record(9401, 0)])],
+      },
+      pdfUuid,
+      new Set([pdfUuid]),
+    );
+
+    const summary = await orchestrator(source, root, ["supreme", "historical"]).run();
+
+    expect(documentUuid).not.toBe(pdfUuid);
+    expect(source.enriched).toBe(1);
+    expect(summary).toMatchObject({ uniqueDocuments: 1, duplicates: 1 });
+    expect(
+      (await readFile(path.join(root, "data/documents.jsonl"), "utf8")).trim().split("\n"),
+    ).toHaveLength(1);
+    const memberships = (await readFile(path.join(root, "data/corpus-memberships.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { partitionId: string; identity: Record<string, string> });
+    expect(memberships).toEqual([
+      expect.objectContaining({
+        partitionId: "supreme",
+        identity: { documentUuid, pdfUuid },
+      }),
+      expect.objectContaining({
+        partitionId: "historical",
+        identity: { pdfUuid },
+      }),
+    ]);
   });
 
   it("detecta una página repetida aunque cambie ViewState", async () => {

@@ -9,6 +9,7 @@ export interface CliOptions {
   resume: boolean;
   limit?: number;
   maxPages?: number;
+  passNumber?: number;
   logLevel?: LogLevel;
 }
 
@@ -29,6 +30,7 @@ export interface PartitionSummary {
   observed: number;
   inserted: number;
   duplicates: number;
+  newMemberships?: number;
 }
 
 export interface OperationSummary {

@@ -113,6 +113,21 @@
       "origin": "synthetic-contractual",
       "observed": false
     },
+    {
+      "path": "historical-search.html",
+      "origin": "synthetic-contractual",
+      "observed": false
+    },
+    {
+      "path": "historical-results-page-1.html",
+      "origin": "synthetic-contractual",
+      "observed": false
+    },
+    {
+      "path": "historical-results-page-2.xml",
+      "origin": "synthetic-contractual",
+      "observed": false
+    },
     { "path": "expected.json", "origin": "fixture-expectations" },
     { "path": "fixture-manifest.json", "origin": "fixture-manifest" }
   ]

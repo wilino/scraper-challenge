@@ -106,6 +106,10 @@ export class PjDiscoverySource implements DiscoverySource<PjListRecord> {
     return scrapedDocumentSchema.parse(input);
   }
 
+  public membershipIdentity(record: PjListRecord): { documentUuid: string } {
+    return { documentUuid: record.nativeId };
+  }
+
   public async nextPage(
     current: DiscoveryPage<PjListRecord>,
     signal?: AbortSignal,

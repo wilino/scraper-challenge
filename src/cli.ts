@@ -17,6 +17,7 @@ import { defaultCliOperations } from "./cli-operations.js";
 import { HttpRequestError, PreflightError } from "./core/http-errors.js";
 import { DiscoveryConfigurationError, DiscoveryStopError } from "./core/discovery-types.js";
 import { PjStructuralError } from "./sites/pj/parser.js";
+import { PjHistoricalStructuralError } from "./sites/pj/historical-parser.js";
 import { PjAdapterStateError } from "./sites/pj/adapter.js";
 
 const COMMANDS = new Set<CommandName>(["discover", "download", "retry-failed"]);
@@ -34,13 +35,14 @@ Opciones:
   --resume                    Reanudar discover desde un checkpoint compatible
   --limit <n>                 Limitar documentos procesados en esta ejecución
   --max-pages <n>             Limitar páginas de discover
+  --pass <n>                  Registrar esta pasada completa para reconciliación
   --log-level <nivel>         debug | info | warn | error
   -h, --help                  Mostrar ayuda
 
 SIGINT finaliza con 130; SIGTERM finaliza con 143.`;
 
 const COMMAND_HELP: Readonly<Record<CommandName, string>> = {
-  discover: `Uso: npm run scrape -- discover [--resume] [--limit <n>] [--max-pages <n>] [--log-level <nivel>]`,
+  discover: `Uso: npm run scrape -- discover [--resume] [--pass <n>] [--limit <n>] [--max-pages <n>] [--log-level <nivel>]`,
   download: `Uso: npm run scrape -- download [--limit <n>] [--log-level <nivel>]`,
   "retry-failed": `Uso: npm run scrape -- retry-failed [--limit <n>] [--log-level <nivel>]`,
 };
@@ -70,7 +72,10 @@ function positiveInteger(raw: string | undefined, option: string): number {
 }
 
 function assertOptionAllowed(command: CommandName, option: string): void {
-  if (command !== "discover" && (option === "--resume" || option === "--max-pages")) {
+  if (
+    command !== "discover" &&
+    (option === "--resume" || option === "--max-pages" || option === "--pass")
+  ) {
     throw new CliUsageError(`${option} solo puede usarse con discover`);
   }
 }
@@ -104,6 +109,10 @@ export function parseCliArguments(arguments_: readonly string[]): CliInvocation 
         options.maxPages = positiveInteger(arguments_[index + 1], option);
         index += 1;
         break;
+      case "--pass":
+        options.passNumber = positiveInteger(arguments_[index + 1], option);
+        index += 1;
+        break;
       case "--log-level": {
         const value = arguments_[index + 1];
         if (value === undefined || !LOG_LEVELS.has(value as LogLevel)) {
@@ -133,7 +142,12 @@ export function exitCodeForError(error: unknown): number {
   )
     return 2;
   if (error instanceof PreflightError) return 3;
-  if (error instanceof PjStructuralError || error instanceof PjAdapterStateError) return 4;
+  if (
+    error instanceof PjStructuralError ||
+    error instanceof PjHistoricalStructuralError ||
+    error instanceof PjAdapterStateError
+  )
+    return 4;
   if (error instanceof DiscoveryStopError) return error.reason === "interrupted" ? 130 : 4;
   if (error instanceof HttpRequestError) {
     if (error.classification === "access") return 3;

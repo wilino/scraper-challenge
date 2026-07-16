@@ -1,4 +1,5 @@
 export * from "./checkpoint.js";
+export * from "./corpus-membership.js";
 export * from "./document.js";
 export * from "./download-manifest.js";
 export * from "./failure.js";

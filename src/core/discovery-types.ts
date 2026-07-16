@@ -1,4 +1,5 @@
 import type { ScrapedDocument } from "../models/document.js";
+import type { CorpusIdentity } from "../models/corpus-membership.js";
 
 export interface DiscoveryRecord {
   nativeId: string;
@@ -44,6 +45,7 @@ export interface DiscoverySource<TRecord extends DiscoveryRecord = DiscoveryReco
     signal?: AbortSignal,
   ): Promise<DiscoveryPage<TRecord>>;
   enrichRecord(record: TRecord, context: EnrichRecordContext): Promise<ScrapedDocument>;
+  membershipIdentity?(record: TRecord): CorpusIdentity;
   nextPage(
     current: DiscoveryPage<TRecord>,
     signal?: AbortSignal,
@@ -69,6 +71,7 @@ export interface PartitionDiscoverySummary {
   uniqueMemberships: number;
   duplicateMemberships: number;
   newDocuments: number;
+  newCorpusMemberships: number;
   globalDuplicates: number;
   termination: SuccessfulTermination;
 }

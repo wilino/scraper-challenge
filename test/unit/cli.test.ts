@@ -83,7 +83,7 @@ describe("argumentos CLI", () => {
     expect(output).toHaveBeenNthCalledWith(2, expect.stringContaining("download"));
   });
 
-  it("parsea únicamente las opciones MVP", () => {
+  it("parsea opciones operativas y número de pasada", () => {
     expect(
       parseCliArguments([
         "discover",
@@ -92,12 +92,14 @@ describe("argumentos CLI", () => {
         "25",
         "--max-pages",
         "2",
+        "--pass",
+        "3",
         "--log-level",
         "debug",
       ]),
     ).toEqual({
       command: "discover",
-      options: { resume: true, limit: 25, maxPages: 2, logLevel: "debug" },
+      options: { resume: true, limit: 25, maxPages: 2, passNumber: 3, logLevel: "debug" },
     });
   });
 
@@ -108,6 +110,7 @@ describe("argumentos CLI", () => {
     ["discover", "--log-level", "trace"],
     ["download", "--resume"],
     ["retry-failed", "--max-pages", "2"],
+    ["download", "--pass", "2"],
     ["download", "--extra"],
     ["discover", "--resume", "--resume"],
   ])("rechaza uso inválido con código 2: %j", async (...arguments_) => {

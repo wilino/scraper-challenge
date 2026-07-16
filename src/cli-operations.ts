@@ -23,10 +23,18 @@ import { scrapedDocumentSchema, type ScrapedDocument } from "./models/document.j
 import type { DownloadManifestEvent } from "./models/download-manifest.js";
 import type { ScrapeFailure } from "./models/failure.js";
 import { PjAdapter } from "./sites/pj/adapter.js";
+import {
+  PjCorpusDiscoverySource,
+  type PjCorpusRecord,
+} from "./sites/pj/corpus-discovery-source.js";
 import { PjDiscoverySource } from "./sites/pj/discovery-source.js";
-import type { PjListRecord } from "./sites/pj/parser.js";
+import { PjHistoricalAdapter } from "./sites/pj/historical-adapter.js";
+import {
+  HISTORICAL_PARTITION,
+  PjHistoricalDiscoverySource,
+} from "./sites/pj/historical-discovery-source.js";
 
-const PARTITIONS = ["supreme", "superior"] as const;
+const PARTITIONS = ["supreme", "superior", HISTORICAL_PARTITION] as const;
 
 function queryHash(): string {
   return createHash("sha256")
@@ -39,6 +47,13 @@ function queryHash(): string {
           includeAutoQualifiers: true,
         },
         { court: "superior", query: "", mode: "general" },
+        {
+          collection: HISTORICAL_PARTITION,
+          court: 2,
+          instance: 2,
+          specialty: 2,
+          year: "",
+        },
       ]),
     )
     .digest("hex");
@@ -65,6 +80,7 @@ function discoveryOperationSummary(
       observed: partition.rawMemberships,
       inserted: partition.newDocuments,
       duplicates: partition.duplicateMemberships + partition.globalDuplicates,
+      newMemberships: partition.newCorpusMemberships,
     })),
     pdfs: { downloaded: 0, existing: 0, failed: 0 },
     rateLimitResponses,
@@ -165,13 +181,18 @@ export class DefaultCliOperations implements CliOperations {
     });
     const client = new PjHttpClient(context.config, { logger });
     const adapter = new PjAdapter(context.config, { http: client, logger });
-    const orchestrator = new DiscoveryOrchestrator<PjListRecord>({
-      source: new PjDiscoverySource(adapter),
+    const historicalAdapter = new PjHistoricalAdapter(context.config, { http: client, logger });
+    const orchestrator = new DiscoveryOrchestrator<PjCorpusRecord>({
+      source: new PjCorpusDiscoverySource(
+        new PjDiscoverySource(adapter),
+        new PjHistoricalDiscoverySource(historicalAdapter),
+      ),
       outputDirectory: context.config.outputDir,
       baseUrl: context.config.baseUrl,
       queryHash: queryHash(),
       partitions: PARTITIONS,
       corpusReconciliationPassed: false,
+      passNumber: options.passNumber ?? 1,
     });
     try {
       const result = await orchestrator.run({
