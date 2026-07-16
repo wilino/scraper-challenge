@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 
 import type { ScraperConfig } from "../../config/env.js";
+import { HttpRequestError } from "../../core/http-errors.js";
 import {
   PjHttpClient,
   type ControlledRequest,
@@ -66,6 +67,22 @@ function pageResponseMismatch(
     return `La página ${String(targetPage)} repitió silenciosamente la anterior`;
   }
   return undefined;
+}
+
+function isRecoverableDetailSessionFailure(error: unknown): error is HttpRequestError {
+  return (
+    error instanceof HttpRequestError &&
+    error.classification === "http_transient" &&
+    error.status === 500
+  );
+}
+
+function isInterruption(error: unknown, signal?: AbortSignal): boolean {
+  return (
+    signal?.aborted === true ||
+    (error instanceof HttpRequestError && error.classification === "interrupted") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
 }
 
 export class PjAdapter {
@@ -155,13 +172,74 @@ export class PjAdapter {
   }
 
   async fetchDetail(record: PjListRecord, signal?: AbortSignal): Promise<CompletePjRecord> {
+    const page = this.currentResults.pagination.currentPage;
+    try {
+      return await this.#fetchDetailOnce(record, page, signal);
+    } catch (firstError: unknown) {
+      if (!isRecoverableDetailSessionFailure(firstError)) throw firstError;
+
+      this.#logger.warn(
+        {
+          documentId: record.nativeId,
+          page,
+          classification: firstError.classification,
+          status: firstError.status,
+          attempt: firstError.attempt,
+        },
+        "Detalle PJ agotó sus reintentos; reconstruyendo la sesión antes de reintentarlo una vez",
+      );
+      await this.#recoverToPage(page, signal);
+
+      try {
+        return await this.#fetchDetailOnce(record, page, signal);
+      } catch (secondError: unknown) {
+        if (!isRecoverableDetailSessionFailure(secondError)) throw secondError;
+        try {
+          await this.#recoverToPage(page, signal);
+        } catch (recoveryError: unknown) {
+          if (isInterruption(recoveryError, signal)) throw recoveryError;
+          this.#logger.warn(
+            {
+              documentId: record.nativeId,
+              page,
+              errorName: recoveryError instanceof Error ? recoveryError.name : "Error",
+              classification:
+                recoveryError instanceof HttpRequestError
+                  ? recoveryError.classification
+                  : "unknown",
+            },
+            "No se pudo reconstruir la sesión tras el segundo fallo de detalle",
+          );
+        }
+        this.#logger.warn(
+          {
+            documentId: record.nativeId,
+            page,
+            firstClassification: firstError.classification,
+            firstStatus: firstError.status,
+            secondErrorName: secondError instanceof Error ? secondError.name : "Error",
+            secondClassification:
+              secondError instanceof HttpRequestError ? secondError.classification : "unknown",
+          },
+          "El detalle PJ falló tras una única recuperación acotada",
+        );
+        throw secondError;
+      }
+    }
+  }
+
+  async #fetchDetailOnce(
+    record: PjListRecord,
+    page: number,
+    signal?: AbortSignal,
+  ): Promise<CompletePjRecord> {
     const court = this.#court();
     const expectedPanel = DETAIL_POPUP_BY_COURT[court];
     const response = await this.#requestStateful(
       detailAjaxControls(record.detail),
       "detail",
       expectedPanel,
-      this.currentResults.pagination.currentPage,
+      page,
       signal,
       record.nativeId,
     );

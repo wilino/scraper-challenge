@@ -57,6 +57,16 @@ function response(
   };
 }
 
+function exhaustedDetail500(label: string): HttpRequestError {
+  return new HttpRequestError(label, {
+    classification: "http_transient",
+    retryable: true,
+    safePath: config.resultsPath,
+    status: 500,
+    attempt: config.maxRetries + 1,
+  });
+}
+
 function repeatedPreviousPage(initial: string): string {
   const $ = load(initial);
   const panel = $("[id='formBuscador:panel']").prop("outerHTML");
@@ -91,7 +101,7 @@ class QueueTransport implements PjHttpTransport {
   });
 
   constructor(
-    private readonly responses: ControlledResponse<string>[],
+    private readonly responses: (ControlledResponse<string> | Error)[],
     private readonly recoverFirstStateful = false,
   ) {}
 
@@ -120,6 +130,7 @@ class QueueTransport implements PjHttpTransport {
   private take(): ControlledResponse<string> {
     const next = this.responses.shift();
     if (next === undefined) throw new Error("Respuesta de prueba no configurada");
+    if (next instanceof Error) throw next;
     return next;
   }
 }
@@ -187,6 +198,143 @@ describe("flujo HTTP stateful del adaptador PJ", () => {
       await requestFixture("page-2.urlencoded"),
       await requestFixture("detail.urlencoded"),
     ]);
+  });
+
+  it("reconstruye directamente la página actual y reintenta una sola vez un detalle con 500 agotado", async () => {
+    const [initial, page1, page2, detail] = await Promise.all([
+      fixture("initial.html"),
+      fixture("search-page-1.html"),
+      fixture("partial-page-2.xml"),
+      fixture("detail-partial.xml"),
+    ]);
+    const recoveredPage1 = page1.replaceAll("FIXTURE_VIEWSTATE_1", "RECOVERED_VIEWSTATE_1");
+    const recoveredPage2 = page2.replaceAll("FIXTURE_VIEWSTATE_2", "RECOVERED_VIEWSTATE_2");
+    const firstError = exhaustedDetail500("500 agotado antes de recuperar");
+    const http = new QueueTransport([
+      response(initial),
+      response(page1),
+      response(page2, "text/xml;charset=UTF-8"),
+      firstError,
+      response(initial),
+      response(recoveredPage1),
+      response(recoveredPage2, "text/xml;charset=UTF-8"),
+      response(detail, "text/xml;charset=UTF-8"),
+    ]);
+    const adapter = new PjAdapter(config, {
+      http,
+      logger: createLogger({ runId: "detail-500-recovery-test", level: "silent" }),
+    });
+
+    await adapter.search({ court: "supreme", query: "derecho" });
+    const second = await adapter.nextPage();
+    const record = second.records[0];
+    if (record === undefined) throw new Error("Fixture sin registro en página 2");
+
+    const complete = await adapter.fetchDetail(record);
+
+    expect(complete.list.nativeId).toBe(record.nativeId);
+    expect(adapter.currentResults.pagination.currentPage).toBe(2);
+    expect(http.requests.map(({ phase, page }) => `${phase}:${String(page)}`)).toEqual([
+      "discover:undefined",
+      "discover:1",
+      "discover:2",
+      "detail:2",
+      "discover:undefined",
+      "discover:1",
+      "discover:2",
+      "detail:2",
+    ]);
+  });
+
+  it("tras un segundo fallo reconstruye una sola vez la página y conserva el error para el llamador", async () => {
+    const [initial, page1, page2, detail] = await Promise.all([
+      fixture("initial.html"),
+      fixture("search-page-1.html"),
+      fixture("partial-page-2.xml"),
+      fixture("detail-partial.xml"),
+    ]);
+    const recoveredPage1 = page1.replaceAll("FIXTURE_VIEWSTATE_1", "RECOVERED_VIEWSTATE_1");
+    const recoveredPage2 = page2.replaceAll("FIXTURE_VIEWSTATE_2", "RECOVERED_VIEWSTATE_2");
+    const cleanPage1 = page1.replaceAll("FIXTURE_VIEWSTATE_1", "CLEAN_VIEWSTATE_1");
+    const cleanPage2 = page2.replaceAll("FIXTURE_VIEWSTATE_2", "CLEAN_VIEWSTATE_2");
+    const firstError = exhaustedDetail500("primer 500 agotado");
+    const secondError = exhaustedDetail500("segundo 500 agotado");
+    const http = new QueueTransport([
+      response(initial),
+      response(page1),
+      response(page2, "text/xml;charset=UTF-8"),
+      firstError,
+      response(initial),
+      response(recoveredPage1),
+      response(recoveredPage2, "text/xml;charset=UTF-8"),
+      secondError,
+      response(initial),
+      response(cleanPage1),
+      response(cleanPage2, "text/xml;charset=UTF-8"),
+      response(detail, "text/xml;charset=UTF-8"),
+    ]);
+    const adapter = new PjAdapter(config, {
+      http,
+      logger: createLogger({ runId: "bounded-detail-500-recovery-test", level: "silent" }),
+    });
+
+    await adapter.search({ court: "supreme", query: "derecho" });
+    const second = await adapter.nextPage();
+    const failedRecord = second.records[0];
+    const nextRecord = second.records[1];
+    if (failedRecord === undefined || nextRecord === undefined)
+      throw new Error("Fixture sin registros suficientes en página 2");
+
+    await expect(adapter.fetchDetail(failedRecord)).rejects.toBe(secondError);
+    expect(adapter.currentResults.pagination.currentPage).toBe(2);
+    await expect(adapter.fetchDetail(nextRecord)).resolves.toMatchObject({
+      list: { nativeId: nextRecord.nativeId },
+    });
+
+    expect(http.requests.filter(({ phase }) => phase === "detail")).toHaveLength(3);
+    expect(
+      http.requests.filter(({ phase, page }) => phase === "discover" && page === 2),
+    ).toHaveLength(3);
+    expect(http.requests).toHaveLength(12);
+  });
+
+  it("propaga un segundo fallo no recuperable sin reconstruir nuevamente la sesión", async () => {
+    const [initial, page1, page2] = await Promise.all([
+      fixture("initial.html"),
+      fixture("search-page-1.html"),
+      fixture("partial-page-2.xml"),
+    ]);
+    const recoveredPage1 = page1.replaceAll("FIXTURE_VIEWSTATE_1", "RECOVERED_VIEWSTATE_1");
+    const recoveredPage2 = page2.replaceAll("FIXTURE_VIEWSTATE_2", "RECOVERED_VIEWSTATE_2");
+    const structuralError = new HttpRequestError("panel de detalle ausente", {
+      classification: "structural",
+      retryable: false,
+      safePath: config.resultsPath,
+      attempt: 1,
+    });
+    const http = new QueueTransport([
+      response(initial),
+      response(page1),
+      response(page2, "text/xml;charset=UTF-8"),
+      exhaustedDetail500("500 agotado antes del error estructural"),
+      response(initial),
+      response(recoveredPage1),
+      response(recoveredPage2, "text/xml;charset=UTF-8"),
+      structuralError,
+    ]);
+    const adapter = new PjAdapter(config, {
+      http,
+      logger: createLogger({ runId: "non-recoverable-detail-test", level: "silent" }),
+    });
+
+    await adapter.search({ court: "supreme", query: "derecho" });
+    const second = await adapter.nextPage();
+    const record = second.records[0];
+    if (record === undefined) throw new Error("Fixture sin registro en página 2");
+
+    await expect(adapter.fetchDetail(record)).rejects.toBe(structuralError);
+    expect(http.requests).toHaveLength(8);
+    expect(http.requests.filter(({ phase }) => phase === "detail")).toHaveLength(2);
   });
 
   it("descarta el ViewState inválido, repite la búsqueda y se reposiciona una sola vez", async () => {
