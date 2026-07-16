@@ -210,5 +210,8 @@ describe("request builders PJ", () => {
     expect(encodePayload(buildDetailPayload(html, descriptor))).toBe(
       await requestFixture("detail.urlencoded"),
     );
+    const ajax = buildDetailPayload(html, descriptor);
+    expect(ajax).toContainEqual(["uuid", descriptor.nativeId]);
+    expect(ajax.some(([name]) => name === "sumilla" || name === "palabras")).toBe(false);
   });
 });

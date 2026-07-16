@@ -59,7 +59,11 @@ async function outputDirectory(): Promise<string> {
   return directory;
 }
 
-async function seedFailure(directory: string, nextRetryAt?: string): Promise<void> {
+async function seedFailure(
+  directory: string,
+  nextRetryAt?: string,
+  retryable = true,
+): Promise<void> {
   await new FailureStore(path.join(directory, "data", "failures.jsonl")).append({
     schemaVersion: 1,
     failureId,
@@ -69,7 +73,7 @@ async function seedFailure(directory: string, nextRetryAt?: string): Promise<voi
     page: 2,
     classification: "network",
     attempts: 1,
-    retryable: true,
+    retryable,
     message: "Detalle PJ incompleto (HttpRequestError)",
     ...(nextRetryAt === undefined ? {} : { nextRetryAt }),
     resolution: "open",
@@ -95,6 +99,19 @@ afterEach(async () => {
 });
 
 describe("DetailRetryService", () => {
+  it("reintenta un detalle estructural abierto tras una corrección de código", async () => {
+    const directory = await outputDirectory();
+    await seedFailure(directory, undefined, false);
+
+    await expect(
+      new DetailRetryService({
+        source: source(),
+        outputDirectory: directory,
+        now: () => now,
+      }).run(),
+    ).resolves.toMatchObject({ selected: 1, resolved: 1, stillFailed: 0, remaining: 0 });
+  });
+
   it("reconstruye la sesión, persiste una vez y resuelve el pendiente lógico", async () => {
     const directory = await outputDirectory();
     await seedFailure(directory);
@@ -142,7 +159,7 @@ describe("DetailRetryService", () => {
     expect(result).toMatchObject({ selected: 0, resolved: 0, notEligible: 1 });
   });
 
-  it("un descriptor permanente ausente permanece abierto y deja de ser elegible", async () => {
+  it("un descriptor permanente permanece abierto aunque el comando dirigido lo intente", async () => {
     const directory = await outputDirectory();
     await seedFailure(directory);
     const missingSource = source();

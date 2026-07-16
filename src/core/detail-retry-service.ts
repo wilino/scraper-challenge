@@ -54,11 +54,7 @@ export class DetailRetryService<TRecord extends DiscoveryRecord> {
     await this.#persistence.scanDocuments(() => undefined, options.signal);
     const manifestIds = await this.#manifest.documentIds(options.signal);
     const current = await this.#failures.currentFailures("detail", options.signal);
-    const eligible = await this.#failures.retryEligibleFailures(
-      "detail",
-      this.#now(),
-      options.signal,
-    );
+    const eligible = await this.#failures.retryEligibleDetailFailures(this.#now(), options.signal);
     const selected = eligible
       .slice(0, options.limit)
       .sort(

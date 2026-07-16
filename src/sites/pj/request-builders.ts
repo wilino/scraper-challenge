@@ -5,19 +5,6 @@ import { load, type CheerioAPI } from "cheerio";
 import type { OrderedPairs } from "../../models/http-request.js";
 import { PJ_FORM_ID, PJ_SELECTORS, type PjCourt } from "./selectors.js";
 
-const DETAIL_PARAMETERS = [
-  "uuid",
-  "recurso",
-  "nroexp",
-  "palabras",
-  "pretensiones",
-  "normaDI",
-  "tipoResolucion",
-  "fechaResolucion",
-  "sala",
-  "sumilla",
-] as const;
-
 // Legacy PJ markup encoded the specialized action in this exact generated control.
 // It is intentionally narrow: incidental values of "21" are only sort-order metadata.
 const LEGACY_SPECIALIZED_MARKER: readonly [string, string] = [`${PJ_FORM_ID}:j_idt34`, "21"];
@@ -32,7 +19,6 @@ export interface SearchPayloadOptions {
 export interface DetailRequestDescriptor {
   source: string;
   nativeId: string;
-  parameters: OrderedPairs;
 }
 
 function formFrom(html: string): CheerioAPI {
@@ -205,9 +191,8 @@ export function detailAjaxControls(descriptor: DetailRequestDescriptor): Ordered
   }
   const payload: OrderedPairs = [];
   appendAjaxBase(payload, descriptor.source);
-  const parameterMap = new Map(descriptor.parameters);
-  parameterMap.set("uuid", descriptor.nativeId);
-  for (const name of DETAIL_PARAMETERS) payload.push([name, parameterMap.get(name) ?? ""]);
+  // PJ resolves the popup by UUID. Echoing display metadata is redundant and can trigger its WAF.
+  payload.push(["uuid", descriptor.nativeId]);
   payload.push(
     [descriptor.source, descriptor.source],
     ["org.richfaces.ajax.component", descriptor.source],

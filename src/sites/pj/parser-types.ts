@@ -1,4 +1,4 @@
-import type { HttpRequestSpec, OrderedPairs } from "../../models/index.js";
+import type { HttpRequestSpec } from "../../models/index.js";
 import type { PjCourt } from "./selectors.js";
 
 export class PjStructuralError extends Error {
@@ -13,7 +13,6 @@ export class PjStructuralError extends Error {
 export interface PjDetailDescriptor {
   source: string;
   nativeId: string;
-  parameters: OrderedPairs;
 }
 
 export interface PjListRecord {

@@ -108,6 +108,22 @@ export class FailureStore extends JsonlStore<ScrapeFailure> {
     now: Date,
     signal?: AbortSignal,
   ): Promise<ScrapeFailure[]> {
+    return await this.#retryCandidates(phase, now, false, signal);
+  }
+
+  public async retryEligibleDetailFailures(
+    now: Date,
+    signal?: AbortSignal,
+  ): Promise<ScrapeFailure[]> {
+    return await this.#retryCandidates("detail", now, true, signal);
+  }
+
+  async #retryCandidates(
+    phase: ScrapeFailure["phase"],
+    now: Date,
+    includeNonRetryable: boolean,
+    signal?: AbortSignal,
+  ): Promise<ScrapeFailure[]> {
     await this.initialize(signal);
     const failures: ScrapeFailure[] = [];
     for (const failure of this.#currentById.values()) {
@@ -115,7 +131,7 @@ export class FailureStore extends JsonlStore<ScrapeFailure> {
       if (
         failure.phase === phase &&
         failure.documentId !== undefined &&
-        failure.retryable &&
+        (includeNonRetryable || failure.retryable) &&
         failure.resolution === "open" &&
         (failure.nextRetryAt === undefined || Date.parse(failure.nextRetryAt) <= now.getTime())
       ) {

@@ -1,7 +1,6 @@
 import type { CheerioAPI } from "cheerio";
 import { load } from "cheerio";
 
-import type { OrderedPairs } from "../../models/index.js";
 import { findPdf } from "./parser-download.js";
 import { addValue, clean, normalizeListMetadata } from "./parser-normalization.js";
 import { PjStructuralError, type PjListRecord } from "./parser-types.js";
@@ -53,22 +52,6 @@ function recordIndexFromId(id: string | undefined): number {
     throw new PjStructuralError("Fila PJ sin índice nativo reconocible");
   }
   return recordIndex;
-}
-
-function recordParameters(metadata: Record<string, string[]>, nativeId: string): OrderedPairs {
-  const value = (field: string): string => metadata[field]?.[0] ?? "";
-  return [
-    ["uuid", nativeId],
-    ["recurso", value("recurso")],
-    ["nroexp", value("nroexp")],
-    ["palabras", value("palabras")],
-    ["pretensiones", value("pretensiones")],
-    ["normaDI", value("normaDI")],
-    ["tipoResolucion", value("tipoResolucion")],
-    ["fechaResolucion", value("fechaResolucion")],
-    ["sala", value("sala")],
-    ["sumilla", value("sumilla")],
-  ];
 }
 
 function parseLiveListMetadata(record: CheerioSelection): Record<string, string[]> {
@@ -129,7 +112,7 @@ export function parseRecords(html: string, baseUrl: string): PjListRecord[] {
       row,
       metadata,
       normalized: normalizeListMetadata(metadata),
-      detail: { source, nativeId, parameters: recordParameters(metadata, nativeId) },
+      detail: { source, nativeId },
     };
     const pdf = findPdf(record, baseUrl);
     if (pdf !== undefined) parsed.pdf = pdf;
