@@ -189,6 +189,21 @@ function interruptionAfter(signal: AbortSignal, graceMs: number): Promise<never>
 
 const defaultHandler: CommandHandler = createCommandHandler(defaultCliOperations);
 
+function safeErrorMessage(error: unknown): string {
+  if (error instanceof HttpRequestError) {
+    const outcome =
+      error.status === undefined ? (error.code ?? "sin-código") : `HTTP-${String(error.status)}`;
+    return `${error.message} [${error.classification}; ${outcome}; ${error.safePath}; intento ${String(error.attempt)}]`;
+  }
+  if (error instanceof PreflightError) {
+    return `${error.message} [preflight-${error.kind}; ${error.safePath}]`;
+  }
+  if (error instanceof DiscoveryStopError) {
+    return `${error.message} [${error.reason}]`;
+  }
+  return error instanceof Error ? error.message : "Error general no clasificado";
+}
+
 export async function runCli(
   arguments_: readonly string[],
   handler: CommandHandler = defaultHandler,
@@ -237,9 +252,7 @@ export async function runCli(
       dependencies.signal.reason instanceof CliInterruptedError
         ? dependencies.signal.reason
         : error;
-    writeError(
-      reportedError instanceof Error ? reportedError.message : "Error general no clasificado",
-    );
+    writeError(safeErrorMessage(reportedError));
     const command = arguments_[0];
     if (
       reportedError instanceof CliInterruptedError &&

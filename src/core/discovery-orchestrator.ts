@@ -40,8 +40,13 @@ export interface DiscoveryOrchestratorOptions<TRecord extends DiscoveryRecord = 
 interface MutablePartitionSummary {
   partitionId: string;
   publishedGlobalTotal: number | null;
+  initialQueryTotal: number;
+  finalQueryTotal: number;
   queryTotal: number;
+  initialMaxPages: number;
+  finalMaxPages: number;
   maxPages: number;
+  drift: boolean;
   pagesVisited: number;
   rawMemberships: number;
   uniqueMemberships: number;
@@ -414,8 +419,13 @@ function newPartitionSummary(partitionId: string, page: DiscoveryPage): MutableP
   return {
     partitionId,
     publishedGlobalTotal: page.parsed.publishedGlobalTotal,
+    initialQueryTotal: page.parsed.queryTotal,
+    finalQueryTotal: page.parsed.queryTotal,
     queryTotal: page.parsed.queryTotal,
+    initialMaxPages: page.parsed.pagination.maxPages,
+    finalMaxPages: page.parsed.pagination.maxPages,
     maxPages: page.parsed.pagination.maxPages,
+    drift: false,
     pagesVisited: 0,
     rawMemberships: 0,
     uniqueMemberships: 0,
@@ -427,22 +437,13 @@ function newPartitionSummary(partitionId: string, page: DiscoveryPage): MutableP
 }
 
 function updateObservedTotals(summary: MutablePartitionSummary, page: DiscoveryPage): void {
-  if (
-    summary.queryTotal !== page.parsed.queryTotal ||
-    summary.maxPages !== page.parsed.pagination.maxPages
-  ) {
-    throw stop(
-      "reconciliation_mismatch",
-      "Totales de consulta PJ cambiaron durante la partición",
-      page,
-      {
-        initialQueryTotal: summary.queryTotal,
-        observedQueryTotal: page.parsed.queryTotal,
-        initialMaxPages: summary.maxPages,
-        observedMaxPages: page.parsed.pagination.maxPages,
-      },
-    );
-  }
+  summary.finalQueryTotal = page.parsed.queryTotal;
+  summary.queryTotal = summary.finalQueryTotal;
+  summary.finalMaxPages = page.parsed.pagination.maxPages;
+  summary.maxPages = summary.finalMaxPages;
+  summary.drift =
+    summary.initialQueryTotal !== summary.finalQueryTotal ||
+    summary.initialMaxPages !== summary.finalMaxPages;
   summary.publishedGlobalTotal = page.parsed.publishedGlobalTotal;
 }
 
@@ -469,9 +470,16 @@ function validateDocument(
 }
 
 function validateNaturalEnd(summary: MutablePartitionSummary, page: DiscoveryPage): void {
-  if (summary.rawMemberships !== summary.queryTotal) {
+  if (summary.rawMemberships !== summary.uniqueMemberships + summary.duplicateMemberships) {
+    throw stop("reconciliation_mismatch", "Contabilidad de membresías no reconcilia", page, {
+      rawMemberships: summary.rawMemberships,
+      uniqueMemberships: summary.uniqueMemberships,
+      duplicateMemberships: summary.duplicateMemberships,
+    });
+  }
+  if (!summary.drift && summary.rawMemberships !== summary.finalQueryTotal) {
     throw stop("reconciliation_mismatch", "Fin natural no reconcilia con queryTotal", page, {
-      queryTotal: summary.queryTotal,
+      queryTotal: summary.finalQueryTotal,
       rawMemberships: summary.rawMemberships,
       publishedGlobalTotal: summary.publishedGlobalTotal,
     });

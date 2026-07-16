@@ -76,7 +76,12 @@ function discoveryOperationSummary(
     partitions: result.partitions.map((partition): PartitionSummary => ({
       partitionId: partition.partitionId,
       pages: partition.pagesVisited,
+      initialQueryTotal: partition.initialQueryTotal,
+      finalQueryTotal: partition.finalQueryTotal,
       queryTotal: partition.queryTotal,
+      initialMaxPages: partition.initialMaxPages,
+      finalMaxPages: partition.finalMaxPages,
+      drift: partition.drift,
       observed: partition.rawMemberships,
       inserted: partition.newDocuments,
       duplicates: partition.duplicateMemberships + partition.globalDuplicates,

@@ -26,7 +26,12 @@ export interface CommandContext {
 export interface PartitionSummary {
   partitionId: string;
   pages: number;
+  initialQueryTotal?: number;
+  finalQueryTotal?: number;
   queryTotal: number;
+  initialMaxPages?: number;
+  finalMaxPages?: number;
+  drift?: boolean;
   observed: number;
   inserted: number;
   duplicates: number;

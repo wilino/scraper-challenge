@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 output/
+USAGE.txt
 
 # Evidencia anonimizada: su forma textual es parte del contrato offline.
 test/fixtures/

@@ -190,6 +190,50 @@ describe("orquestador de descubrimiento", () => {
     ).toHaveLength(3);
   });
 
+  it("tolera drift de queryTotal y maxPages y conserva sus extremos", async () => {
+    const root = await output();
+    const source = new FakeSource({
+      supreme: [
+        page("supreme", 1, 3, 4, [record(1, 0), record(2, 1)]),
+        page("supreme", 2, 2, 5, [record(3, 0)]),
+      ],
+    });
+
+    const summary = await orchestrator(source, root).run();
+
+    expect(summary).toMatchObject({
+      termination: "natural_end",
+      datasetComplete: true,
+      rawMemberships: 3,
+    });
+    expect(summary.partitions[0]).toMatchObject({
+      initialQueryTotal: 4,
+      finalQueryTotal: 5,
+      queryTotal: 5,
+      initialMaxPages: 3,
+      finalMaxPages: 2,
+      maxPages: 2,
+      drift: true,
+      rawMemberships: 3,
+      uniqueMemberships: 3,
+      duplicateMemberships: 0,
+    });
+  });
+
+  it("mantiene la reconciliación exacta contra queryTotal cuando no existe drift", async () => {
+    const root = await output();
+    const source = new FakeSource({
+      supreme: [
+        page("supreme", 1, 2, 4, [record(1, 0), record(2, 1)]),
+        page("supreme", 2, 2, 4, [record(3, 0)]),
+      ],
+    });
+
+    await expect(orchestrator(source, root).run()).rejects.toMatchObject({
+      reason: "reconciliation_mismatch",
+    });
+  });
+
   it("persiste el alias PDF y lo recupera sin enriquecer otra vez en la siguiente pasada", async () => {
     const root = await output();
     const pages = { supreme: [page("supreme", 1, 1, 1, [record(301, 0)])] };

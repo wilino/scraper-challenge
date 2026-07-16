@@ -1179,12 +1179,18 @@ for (const xmlPath of [
 }
 
 try {
-  execFileSync(process.execPath, ["--test", join(root, "test", "corpus-reconciler.test.mjs")], {
-    stdio: "pipe",
-  });
+  execFileSync(
+    process.execPath,
+    [
+      "--test",
+      join(root, "test", "corpus-reconciler.test.mjs"),
+      join(root, "test", "corpus-finalizer.test.mjs"),
+    ],
+    { stdio: "pipe" },
+  );
 } catch (error) {
   throw new Error(
-    `Fase 0.1 reconciliador: pruebas fallaron\n${error.stdout?.toString() ?? ""}${error.stderr?.toString() ?? ""}`,
+    `Fase 0.1 reconciliación/finalización: pruebas fallaron\n${error.stdout?.toString() ?? ""}${error.stderr?.toString() ?? ""}`,
   );
 }
 

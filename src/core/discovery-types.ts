@@ -64,8 +64,13 @@ export type FailedTermination =
 export interface PartitionDiscoverySummary {
   partitionId: string;
   publishedGlobalTotal: number | null;
+  initialQueryTotal: number;
+  finalQueryTotal: number;
   queryTotal: number;
+  initialMaxPages: number;
+  finalMaxPages: number;
   maxPages: number;
+  drift: boolean;
   pagesVisited: number;
   rawMemberships: number;
   uniqueMemberships: number;

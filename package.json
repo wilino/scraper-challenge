@@ -16,6 +16,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "validate:phase0": "node scripts/validate-phase0-fixtures.mjs",
+    "reconcile:corpus": "node scripts/finalize-corpus-reconciliation.mjs",
     "check": "npm run format:check && npm run lint && npm run validate:phase0 && npm run test && npm run build"
   },
   "dependencies": {

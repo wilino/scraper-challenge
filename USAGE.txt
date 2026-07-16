@@ -1,0 +1,401 @@
+SCRAPER DE JURISPRUDENCIA PJ - GUÍA OPERATIVA
+
+1. PROPÓSITO
+
+Esta aplicación enumera resoluciones públicas del Poder Judicial del Perú mediante HTTP, conserva el estado de cada recorrido y descarga los PDF anunciados. No automatiza un navegador ni elude controles de acceso.
+
+El flujo normal consta de tres etapas:
+
+  1. discover: enumera y persiste documentos, sin descargar PDF.
+  2. download: descarga los PDF pendientes y valida su contenido.
+  3. retry-failed: reintenta únicamente descargas fallidas que estén abiertas, sean reintentables y ya sean elegibles.
+
+
+2. REQUISITOS
+
+  - Node.js 22 o posterior; Node.js 24 LTS es la versión recomendada y usada por CI.
+  - npm incluido con Node.js.
+  - Conectividad HTTPS hacia jurisprudencia.pj.gob.pe.
+  - Salida de red permitida por el sitio. Un HTTP 403 puede indicar que se requiere una salida autorizada desde Perú.
+  - Espacio suficiente para los archivos de estado y los PDF.
+
+Compruebe las versiones:
+
+  node --version
+  npm --version
+
+Instale exactamente las dependencias fijadas en package-lock.json:
+
+  npm ci
+
+No use npm install para una instalación reproducible.
+
+
+3. AYUDA Y COMPROBACIONES
+
+Mostrar la ayuda general:
+
+  npm run scrape -- --help
+
+Mostrar la sintaxis de un comando:
+
+  npm run scrape -- discover --help
+  npm run scrape -- download --help
+  npm run scrape -- retry-failed --help
+
+Validar formato, lint, contratos, pruebas y compilación:
+
+  npm run check
+
+Compilar y ejecutar la versión compilada:
+
+  npm run build
+  npm start -- --help
+
+
+4. CONFIGURACIÓN
+
+Todos los valores son variables de entorno. La aplicación NO lee .env automáticamente. El archivo .env.example es una plantilla de referencia; para aplicar valores, expórtelos en el shell o páselos en la misma invocación.
+
+Ejemplo con variables exportadas:
+
+  export OUTPUT_DIR=./output
+  export LOG_LEVEL=info
+  export MIN_REQUEST_DELAY_MS=1500
+  export MAX_REQUEST_DELAY_MS=3500
+  npm run scrape -- discover --limit 10
+
+Ejemplo de una sola invocación:
+
+  OUTPUT_DIR=./output LOG_LEVEL=info npm run scrape -- discover --limit 10
+
+Variables y valores predeterminados:
+
+  SCRAPER_BASE_URL
+    Predeterminado: https://jurisprudencia.pj.gob.pe
+    Debe usar HTTPS y el origen permitido. No se aceptan otros hosts.
+
+  SCRAPER_START_PATH
+    Predeterminado: /jurisprudenciaweb/faces/page/inicio.xhtml
+    Ruta de arranque de la sesión JSF. Debe comenzar con /.
+
+  SCRAPER_RESULTS_PATH
+    Predeterminado: /jurisprudenciaweb/faces/page/resultado.xhtml
+    Ruta de resultados JSF. Debe comenzar con /.
+
+  OUTPUT_DIR
+    Predeterminado: ./output
+    Directorio de trabajo. Se resuelve respecto del directorio actual, se crea si no existe y debe ser escribible.
+
+  CONNECT_TIMEOUT_MS
+    Predeterminado: 15000
+    Límite de conexión en milisegundos.
+
+  REQUEST_TIMEOUT_MS
+    Predeterminado: 120000
+    Límite de una respuesta HTTP general en milisegundos.
+
+  PDF_TIMEOUT_MS
+    Predeterminado: 120000
+    Límite del stream de un PDF en milisegundos.
+
+  MIN_REQUEST_DELAY_MS
+    Predeterminado: 1500
+    Pausa mínima aleatoria entre solicitudes.
+
+  MAX_REQUEST_DELAY_MS
+    Predeterminado: 3500
+    Pausa máxima aleatoria entre solicitudes. Debe ser mayor o igual que MIN_REQUEST_DELAY_MS.
+
+  MAX_RETRIES
+    Predeterminado: 5
+    Número máximo de reintentos HTTP después del primer intento.
+
+  BACKOFF_BASE_MS
+    Predeterminado: 2000
+    Base del retroceso exponencial con variación aleatoria.
+
+  BACKOFF_MAX_MS
+    Predeterminado: 120000
+    Tope del retroceso exponencial.
+
+  GLOBAL_COOLDOWN_AFTER_429_MS
+    Predeterminado: 30000
+    Pausa global cuando un HTTP 429 no incluye un Retry-After utilizable.
+
+  MAX_PAGES
+    Predeterminado: 10000
+    Valor de configuración validado. La CLI actual no lo aplica como límite de corrida; use discover --max-pages para imponer un límite operativo explícito.
+
+  MAX_DOCUMENTS
+    Predeterminado: 1000000
+    Valor de configuración validado. La CLI actual no lo aplica como límite de corrida; use discover --limit para limitar documentos nuevos en una ejecución.
+
+  MAX_PDF_BYTES
+    Predeterminado: 104857600
+    Tamaño máximo admitido por PDF, en bytes.
+
+  MAX_HTML_BYTES
+    Predeterminado: 5242880
+    Tamaño máximo admitido por respuesta HTML, en bytes.
+
+  HTML_CONCURRENCY
+    Predeterminado: 1
+    Concurrencia para solicitudes HTML.
+
+  PDF_CONCURRENCY
+    Predeterminado: 1
+    Concurrencia para solicitudes PDF.
+
+  USER_AGENT
+    Predeterminado: jurisprudencia-scraper/1.0
+    Identificador HTTP no vacío.
+
+  LOG_LEVEL
+    Predeterminado: info
+    Valores admitidos por configuración: fatal, error, warn, info, debug, trace o silent.
+    La opción CLI --log-level admite debug, info, warn o error y prevalece para esa ejecución.
+
+Todos los límites numéricos, salvo MAX_RETRIES que puede ser cero, deben ser enteros positivos.
+
+
+5. DESCUBRIMIENTO
+
+Recorrido completo desde el inicio:
+
+  npm run scrape -- discover
+
+Prueba controlada de hasta 10 documentos nuevos:
+
+  npm run scrape -- discover --limit 10
+
+Prueba controlada de hasta 2 páginas en total:
+
+  npm run scrape -- discover --max-pages 2
+
+La opción --limit cuenta documentos nuevos persistidos durante esa ejecución. No es un límite de solicitudes ni de documentos ya conocidos. La opción --max-pages cuenta páginas visitadas entre las particiones de la ejecución. Cualquier salida por límite es parcial y no prueba que el corpus esté completo.
+
+Particiones recorridas, en orden:
+
+  - supreme
+  - superior
+  - historical-arbitration
+
+El descubrimiento enriquece cada fila con su detalle, deduplica por identidades fuertes, registra la pertenencia a cada partición y prepara el manifest de descarga. No descarga los PDF.
+
+
+6. CHECKPOINT Y REANUDACIÓN
+
+El checkpoint se actualiza después de cada fila confirmada. Para continuar desde un checkpoint compatible:
+
+  npm run scrape -- discover --resume
+
+También se puede limitar una reanudación:
+
+  npm run scrape -- discover --resume --max-pages 25
+
+Use --resume después de una interrupción o una ejecución parcial cuando desee continuar desde la página y fila confirmadas. Sin --resume, discover comienza de nuevo en la primera partición, pero la persistencia idempotente evita volver a insertar documentos conocidos.
+
+La reanudación se rechaza si cambió el origen, la consulta o la estrategia de particiones. Un checkpoint malformado también se rechaza; no lo edite manualmente mientras haya una ejecución activa.
+
+SIGINT permite una finalización controlada y devuelve 130. SIGTERM devuelve 143. El proceso concede hasta cinco segundos para cerrar antes de reportar la interrupción.
+
+
+7. PASADAS Y CONVERGENCIA DEL CORPUS
+
+--pass asigna un número positivo a las membresías observadas durante discover:
+
+  npm run scrape -- discover --pass 1
+  npm run scrape -- discover --pass 2
+  npm run scrape -- discover --pass 3
+
+Cada pasada completa debe comenzar sin --resume para observar nuevamente todas las particiones desde el inicio. No reutilice el mismo número para observaciones conceptualmente distintas. Una pasada interrumpida puede continuarse con el mismo número y --resume:
+
+  npm run scrape -- discover --pass 2 --resume
+
+El archivo corpus-memberships.jsonl conserva una membresía como máximo por partición, pasada y token. Los documentos ya conocidos no se duplican, pero su membresía sí queda registrada para la pasada correspondiente.
+
+Una corrida con --pass solo etiqueta evidencia; no convierte por sí sola la salida en una afirmación de corpus completo. La convergencia exige recorridos naturales completos, totales estables, identidades resueltas y una pasada final completa sin identidades nuevas. La salida actual conserva corpusReconciled como false mientras esa reconciliación no haya sido incorporada expresamente a la operación.
+
+Finalizar y auditar una reconciliación ya convergida:
+
+  npm run reconcile:corpus -- --output-dir ./output --require-pass
+
+Mostrar todas las opciones del finalizador:
+
+  npm run reconcile:corpus -- --help
+
+El finalizador no ejecuta el scraping. Audita los documentos, memberships, estados finales del manifest y evidencia de convergencia que ya existen. Por defecto espera en OUTPUT_DIR:
+
+  run-receipt.json
+    Metadatos schemaVersion 2 ligados a un commit, con particiones, totales, diferencia enumerable o no enumerable y aprobación trazable de alcance.
+
+  supervisor.log
+    Registro de pasadas completas y de la pasada convergente.
+
+  discover.log
+    Líneas JSON emitidas por las ejecuciones discover, usadas como respaldo de totales.
+
+Puede indicar rutas distintas con --metadata, --supervisor-log y --discovery-log. --receipt cambia el destino; el valor - imprime el recibo por stdout. Sin --receipt, se escribe corpus-reconciliation-receipt.json dentro de OUTPUT_DIR mediante reemplazo atómico y permisos privados.
+
+Con --require-pass, un recibo con status FAIL termina con código 2. Sin esa opción, el comando conserva el recibo FAIL para diagnóstico y solo devuelve error por entradas inválidas o invariantes rotas. PASS requiere, entre otras comprobaciones, convergencia observada, queryTotal reconciliado en cada partición, ecuaciones de unión consistentes, diferencia global demostrada y aprobación explícita del alcance. El recibo final es agregado y no emite UUID, filas fuente ni URLs.
+
+
+8. DESCARGA DE PDF
+
+Después de discover:
+
+  npm run scrape -- download
+
+Descargar como máximo 25 entradas procesables:
+
+  npm run scrape -- download --limit 25
+
+download lee data/documents.jsonl y falla con error de uso si el archivo no existe o está vacío. Procesa los documentos en orden, respeta el manifest y no vuelve a solicitar un PDF descargado si el archivo local conserva ruta, tamaño, cabecera PDF y SHA-256 esperados.
+
+Cada PDF se escribe primero con sufijo .part. Solo después de validar tamaño, cabecera %PDF-, longitud esperada y hash se renombra de forma atómica a .pdf. Al iniciar, se eliminan temporales .pdf.part abandonados.
+
+El directorio OUTPUT_DIR/pdf debe ser un directorio real y no un enlace simbólico. Un PDF inválido, truncado o demasiado grande se elimina y se registra como fallo; nunca se acepta como descarga correcta.
+
+
+9. REINTENTO DE FALLOS
+
+Reintentar todas las descargas actualmente elegibles:
+
+  npm run scrape -- retry-failed
+
+Limitar la ejecución:
+
+  npm run scrape -- retry-failed --limit 20
+
+retry-failed selecciona únicamente documentos cuyo último estado del manifest sea failed y cuyo fallo asociado cumpla todo lo siguiente:
+
+  - retryable es true;
+  - resolution es open;
+  - nextRetryAt no existe o ya llegó.
+
+Un reintento correcto añade un evento downloaded al manifest y un evento resolved al historial de fallos. Los fallos permanentes, de seguridad, abandonados o todavía sujetos a Retry-After no se fuerzan.
+
+No use --resume, --max-pages ni --pass con download o retry-failed; son opciones exclusivas de discover.
+
+
+10. TRATAMIENTO DE HTTP 429 Y FALLOS TRANSITORIOS
+
+Ante HTTP 429, todas las solicitudes al host comparten una pausa global. Si existe Retry-After, se respeta su valor en segundos o fecha HTTP. Si no existe o no es válido, se usa GLOBAL_COOLDOWN_AFTER_429_MS. No reinicie inmediatamente el proceso para evitar esa espera: hacerlo aumenta la presión sobre el servicio.
+
+Los estados 408, 500, 502, 503 y 504, además de ciertos errores temporales de red, usan reintentos con retroceso exponencial y variación aleatoria. BACKOFF_MAX_MS limita la espera. Al agotarse los reintentos, el fallo queda registrado cuando corresponde.
+
+Recomendación operativa ante muchos 429:
+
+  1. Deje que la ejecución respete Retry-After.
+  2. Mantenga HTML_CONCURRENCY y PDF_CONCURRENCY en 1.
+  3. Aumente MIN_REQUEST_DELAY_MS y MAX_REQUEST_DELAY_MS.
+  4. Reanude discover desde el checkpoint o use retry-failed cuando los fallos sean elegibles.
+
+
+11. ARCHIVOS DE SALIDA
+
+Dentro de OUTPUT_DIR se crean los siguientes artefactos locales:
+
+  data/documents.jsonl
+    Un documento enriquecido por línea JSON. Es append-only y se deduplica por identidad.
+
+  data/corpus-memberships.jsonl
+    Membresías observadas por partición y pasada. Es append-only.
+
+  data/download-manifest.jsonl
+    Historial append-only de estados pending, downloaded, failed y no_pdf. El último evento de cada documentId es su estado vigente.
+
+  data/failures.jsonl
+    Historial append-only de fallos y resoluciones.
+
+  state/completed-ids.txt
+    Índice local de documentId ya persistidos.
+
+  state/checkpoint.json
+    Última página y fila confirmadas, junto con el origen y hash de consulta.
+
+  pdf/*.pdf
+    PDF validados. El nombre contiene documentId, fecha y un identificador humano saneado.
+
+  corpus-reconciliation-receipt.json
+    Recibo agregado opcional producido por reconcile:corpus después de una reconciliación convergida.
+
+Los JSONL y archivos de estado forman una unidad operativa. Para conservar reanudación, deduplicación y trazabilidad, respalde OUTPUT_DIR completo y no mezcle archivos procedentes de recorridos incompatibles.
+
+
+12. SALIDA DEL COMANDO
+
+Al finalizar correctamente, la CLI imprime una sola línea JSON de resumen. Sus campos principales son:
+
+  command: comando ejecutado.
+  partitions: páginas, total informado, observados, insertados, duplicados y nuevas membresías.
+  pdfs: cantidades downloaded, existing y failed.
+  rateLimitResponses: respuestas HTTP 429 observadas.
+  globalTotal: total publicado inicial y final cuando aplica.
+  durationMs: duración total.
+  stopReason: natural_end, limit, max_pages, interrupted o failed.
+  definitiveFailures: fallos definitivos de la ejecución.
+  corpusReconciled: indica si el corpus fue reconciliado.
+  complete: solo true con fin natural, corpus reconciliado y cero fallos definitivos.
+  completionNotice: interpretación explícita del resultado.
+
+No interprete stopReason=natural_end como completitud si corpusReconciled es false. Tampoco interprete una prueba con --limit o --max-pages como cobertura completa.
+
+Los logs estructurados incluyen un runId y omiten o redactan cookies, autorización, credenciales, tokens y ViewState. Para diagnóstico detallado:
+
+  npm run scrape -- discover --limit 1 --log-level debug
+
+
+13. CÓDIGOS DE SALIDA
+
+  0    Comando ejecutado sin fallos definitivos, aunque una corrida parcial o no reconciliada puede seguir devolviendo 0.
+  1    Error general no clasificado.
+  2    Error de uso, argumento o configuración.
+  3    Fallo de preflight, acceso, DNS, TLS o redirect no permitido.
+  4    Cambio estructural, estado JSF inválido o fallo de descubrimiento estructural.
+  5    La operación terminó con uno o más fallos definitivos registrados.
+  130  Interrupción mediante SIGINT.
+  143  Interrupción mediante SIGTERM.
+
+
+14. SEGURIDAD Y OPERACIÓN RESPONSABLE
+
+  - Use solo el origen HTTPS permitido. La aplicación bloquea otros orígenes, credenciales embebidas y redirects no autorizados.
+  - No desactive la validación TLS.
+  - No copie cookies, ViewState, tokens ni cabeceras Authorization en reportes.
+  - No publique OUTPUT_DIR: puede contener metadatos, identificadores, URLs efectivas y documentos descargados.
+  - No ejecute varias instancias contra el mismo OUTPUT_DIR; los archivos son append-only pero no constituyen una base transaccional multi-proceso.
+  - Mantenga demoras y concurrencia conservadoras. Respete HTTP 429 y Retry-After.
+  - No edite manualmente documents.jsonl, el manifest, failures.jsonl, corpus-memberships.jsonl ni el checkpoint durante una ejecución.
+  - No sustituya el directorio pdf por un enlace simbólico.
+  - Antes de compartir logs, verifique igualmente que no contengan datos que su entorno considere sensibles.
+
+
+15. SECUENCIA OPERATIVA RECOMENDADA
+
+Prueba inicial pequeña:
+
+  npm ci
+  npm run check
+  npm run scrape -- discover --limit 10 --log-level info
+  npm run scrape -- download --limit 3 --log-level info
+
+Recorrido reanudable:
+
+  npm run scrape -- discover --pass 1
+
+Si se interrumpe:
+
+  npm run scrape -- discover --pass 1 --resume
+
+Descarga y recuperación:
+
+  npm run scrape -- download
+  npm run scrape -- retry-failed
+
+Pasada posterior de convergencia, desde el inicio:
+
+  npm run scrape -- discover --pass 2
+
+Antes de declarar éxito, revise la línea JSON final, confirme que no hubo límites ni fallos definitivos y evalúe explícitamente corpusReconciled y complete.

@@ -15,7 +15,7 @@ import {
 import { exitCodeForError, parseCliArguments, runCli, type CommandHandler } from "../../src/cli.js";
 import { selectRetryEligibleDocuments } from "../../src/cli-operations.js";
 import type { ScraperConfig } from "../../src/config/env.js";
-import { PreflightError } from "../../src/core/http-errors.js";
+import { HttpRequestError, PreflightError } from "../../src/core/http-errors.js";
 import { PjStructuralError } from "../../src/sites/pj/parser.js";
 
 const config: ScraperConfig = {
@@ -323,5 +323,25 @@ describe("resume, señales y exit codes", () => {
     expect(exitCodeForError(new PjStructuralError("estructura"))).toBe(4);
     expect(exitCodeForError(new Error("general"))).toBe(1);
     expect(exitCodeForError(new CliInterruptedError("SIGTERM"))).toBe(143);
+  });
+
+  it("informa diagnóstico HTTP seguro sin URL completa ni body", async () => {
+    const writeError = vi.fn();
+    const handler = vi.fn<CommandHandler>(() =>
+      Promise.reject(
+        new HttpRequestError("PJ respondió con estado transitorio 500", {
+          classification: "http_transient",
+          retryable: true,
+          safePath: "/jurisprudenciaweb/faces/page/resultado.xhtml",
+          attempt: 6,
+          status: 500,
+        }),
+      ),
+    );
+
+    await expect(runCli(["discover"], handler, { config, writeError })).resolves.toBe(1);
+    expect(writeError).toHaveBeenCalledWith(
+      "PJ respondió con estado transitorio 500 [http_transient; HTTP-500; /jurisprudenciaweb/faces/page/resultado.xhtml; intento 6]",
+    );
   });
 });
