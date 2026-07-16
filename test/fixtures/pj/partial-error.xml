@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- origin: synthetic-contractual; error node was not observed in Fase 0 -->
+<partial-response>
+  <error>
+    <error-name>javax.faces.application.ViewExpiredException</error-name>
+    <error-message><![CDATA[Vista expirada sintética para prueba offline.]]></error-message>
+  </error>
+</partial-response>

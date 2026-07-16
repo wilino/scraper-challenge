@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- origin: captured-envelope-synthetic-content -->
+<partial-response>
+  <changes>
+    <update id="formBuscador:popupResolucion"><![CDATA[
+      <div id="formBuscador:popupResolucion">
+        <div id="formBuscador:popupResolucion_header_content">Apelación - PJ-FIX-0011</div>
+        <div id="formBuscador:popupResolucion_content">
+          <section data-section="resolution"><h2>DATOS DE LA RESOLUCIÓN:</h2><dl>
+            <dt>Fecha de la Resolución:</dt><dd>30/01/2024</dd><dt>Tipo de Resolución:</dt><dd>Ejecutoria Suprema</dd><dt>Fallo/Sentido de la Resolución:</dt><dd></dd><dt>Jueces Supremos:</dt><dd>***</dd><dt>Ponente:</dt><dd>***</dd><dt>Dirimente:</dt><dd>***</dd><dt>Discordia:</dt><dd>***</dd><dt>Voto Concordado:</dt><dd>***</dd><dt>Fundamentos Adicionales:</dt><dd></dd><dt>Sumilla:</dt><dd>Resumen ficticio.</dd><dt>Norma de Derecho Interno:</dt><dd></dd><dt>Jurisprudencia Nacional/Acuerdo Plenario:</dt><dd></dd><dt>Norma de Derecho Internacional:</dt><dd></dd><dt>Organismo Emisor de Jursiprudencia Internacional:</dt><dd></dd><dt>Palabras Clave:</dt><dd>fixture, prueba</dd><dt>Relevante:</dt><dd>No</dd><dt>Vinculante:</dt><dd>No</dd><dt>Fecha de Publicación en El Peruano:</dt><dd></dd>
+          </dl></section>
+          <section data-section="process"><h2>DATOS DEL PROCESO:</h2><dl>
+            <dt>Sala:</dt><dd>Sala Ficticia C</dd><dt>Distrito Judicial de Procedencia:</dt><dd>Distrito Ficticio</dd><dt>Especialidad:</dt><dd>Especialidad Ficticia</dd><dt>Materia de la Causa:</dt><dd></dd><dt>Pretensión/Delito:</dt><dd>Materia ficticia B</dd><dt>Régimen Procesal:</dt><dd>Tradicional</dd><dt>Tipo de Proceso:</dt><dd>A ingresar</dd><dt>N° de Expediente de la Sala Superior:</dt><dd>PJ-FIX-SUP-0011</dd><dt>Archivo de la Resolución:</dt><dd><a data-file-type="pdf" href="/jurisprudenciaweb/ServletDescarga?uuid=00000000-0000-4000-8000-000000009011">PDF</a><a data-file-type="word" href="/jurisprudenciaweb/ServletDescarga?uuid=00000000-0000-4000-8000-000000009021">Word</a></dd>
+          </dl></section>
+          <section data-section="provenance"><h2>DATOS DE PROCEDENCIA:</h2><dl>
+            <dt>Fecha de Demanda:</dt><dd>01/01/2023</dd><dt>Fecha de Calificación:</dt><dd>02/01/2023</dd><dt>Organo Jurisdiccional de procedencia:</dt><dd></dd><dt>Fallo:</dt><dd>Resultado ficticio</dd><dt>Tipo de Resolución:</dt><dd>Sentencia</dd><dt>Expediente de Procedencia:</dt><dd>PJ-FIX-PROC-0011</dd><dt>Fecha de Resolución de Procedencia:</dt><dd>03/01/2023</dd><dt>Organo Jurisdiccional de Origen:</dt><dd></dd><dt>Fallo de Origen:</dt><dd></dd><dt>Tipo de Resolución de Origen:</dt><dd></dd><dt>Expediente de Origen:</dt><dd></dd><dt>Fecha de Resolución de Origen:</dt><dd></dd><dt>Fecha de Denuncia de Origen:</dt><dd></dd>
+          </dl></section>
+        </div>
+      </div>
+    ]]></update>
+    <update id="j_idt703"><![CDATA[<span class="rf-msgs" id="j_idt703"></span>]]></update>
+    <update id="javax.faces.ViewState"><![CDATA[FIXTURE_VIEWSTATE_3]]></update>
+  </changes>
+</partial-response>

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+output/
+
+# Evidencia anonimizada: su forma textual es parte del contrato offline.
+test/fixtures/

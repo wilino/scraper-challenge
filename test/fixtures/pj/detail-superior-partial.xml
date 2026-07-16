@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- origin: captured-envelope-synthetic-content; Corte Superior variant observed -->
+<partial-response>
+  <changes>
+    <update id="formBuscador:popupResolucionSuperior"><![CDATA[
+      <div id="formBuscador:popupResolucionSuperior">
+        <div id="formBuscador:popupResolucionSuperior_header_content">Apelación - PJ-SUP-FIX-0001</div>
+        <div id="formBuscador:popupResolucionSuperior_content">
+          <section data-section="resolution"><h2>DATOS DE LA RESOLUCIÓN:</h2><dl><dt>Fecha de la Resolución:</dt><dd>10/02/2024</dd><dt>Tipo de Resolución:</dt><dd>Sentencia de Vista</dd><dt>Fallo/Sentido de la Resolución:</dt><dd>Resultado superior ficticio</dd><dt>Jueces:</dt><dd>***</dd><dt>Ponente:</dt><dd>***</dd><dt>Dirimente:</dt><dd></dd><dt>Discordia:</dt><dd></dd><dt>Voto Concordado:</dt><dd></dd><dt>Fundamentos Adicionales:</dt><dd></dd><dt>Sumilla:</dt><dd>Resumen superior sintético</dd><dt>Norma de Derecho Interno:</dt><dd>Norma superior sintética</dd><dt>Jurisprudencia Nacional/Acuerdo Plenario:</dt><dd></dd><dt>Norma de Derecho Internacional:</dt><dd></dd><dt>Organismo Emisor de Jursiprudencia Internacional:</dt><dd></dd><dt>Palabras Clave:</dt><dd>superior, prueba</dd><dt>Relevante:</dt><dd>No</dd><dt>Vinculante:</dt><dd>No</dd><dt>Fecha de Publicación en El Peruano:</dt><dd></dd></dl></section>
+          <section data-section="process"><h2>DATOS DEL PROCESO:</h2><dl><dt>Instancia:</dt><dd>Sala Superior Ficticia A</dd><dt>Distrito:</dt><dd>Distrito Superior Ficticio</dd><dt>Especialidad:</dt><dd>Comercial</dd><dt>Materia de la Causa:</dt><dd></dd><dt>Pretención/Delito:</dt><dd>Materia superior ficticia A</dd><dt>Régimen Procesal:</dt><dd>Tradicional</dd><dt>Proceso:</dt><dd>Proceso superior ficticio</dd><dt>N° de Expediente de la Sala Superior:</dt><dd>PJ-SUP-FIX-0001</dd><dt>Archivo de la Resolución:</dt><dd><a data-file-type="pdf" href="/jurisprudenciaweb/ServletDescarga?uuid=00000000-0000-4000-8000-000000009101">PDF</a><a data-file-type="word" href="/jurisprudenciaweb/ServletDescarga?uuid=00000000-0000-4000-8000-000000009102">Word</a></dd></dl></section>
+          <section data-section="provenance"><h2>DATOS DE PROCEDENCIA:</h2><dl><dt>Fecha de Demanda:</dt><dd></dd><dt>Fecha de Calificación:</dt><dd></dd><dt>Organo Jurisdiccional de procedencia:</dt><dd>Órgano superior ficticio</dd><dt>Fallo:</dt><dd></dd><dt>Tipo de Resolución:</dt><dd></dd><dt>Expediente de Procedencia:</dt><dd></dd><dt>Fecha de Resolución de Procedencia:</dt><dd></dd><dt>Organo Jurisdiccional de Origen:</dt><dd></dd><dt>Fallo de Origen:</dt><dd></dd><dt>Tipo de Resolución de Origen:</dt><dd></dd><dt>Expediente de Origen:</dt><dd></dd><dt>Fecha de Resolución de Origen:</dt><dd></dd><dt>Fecha de Denuncia de Origen:</dt><dd></dd></dl></section>
+        </div>
+      </div>
+    ]]></update>
+    <update id="j_idt703"><![CDATA[<span class="rf-msgs" id="j_idt703"></span>]]></update>
+    <update id="javax.faces.ViewState"><![CDATA[FIXTURE_VIEWSTATE_SUPERIOR_2]]></update>
+  </changes>
+</partial-response>

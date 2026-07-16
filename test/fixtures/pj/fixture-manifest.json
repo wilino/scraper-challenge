@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 3,
+  "sanitization": "deterministic-markers-and-rfc4122-synthetic-uuids-v2",
+  "capturedAt": "2026-07-15T19:36:56-05:00",
+  "files": [
+    {
+      "path": "initial.html",
+      "origin": "captured-structure-synthetic-content",
+      "viewState": "FIXTURE_VIEWSTATE_0"
+    },
+    {
+      "path": "search-page-1.html",
+      "origin": "captured-structure-synthetic-content",
+      "viewState": "FIXTURE_VIEWSTATE_1",
+      "records": 10
+    },
+    {
+      "path": "search-page-2.html",
+      "origin": "captured-structure-synthetic-content",
+      "viewState": "FIXTURE_VIEWSTATE_2",
+      "records": 10
+    },
+    {
+      "path": "partial-page-2.xml",
+      "origin": "captured-envelope-synthetic-content",
+      "viewState": "FIXTURE_VIEWSTATE_2",
+      "records": 10
+    },
+    {
+      "path": "search-last-page-contract.html",
+      "origin": "captured-structure-synthetic-content",
+      "observed": true,
+      "records": 1
+    },
+    {
+      "path": "search-superior-page-1.html",
+      "origin": "captured-structure-synthetic-content",
+      "records": 2,
+      "variant": "Corte Superior"
+    },
+    {
+      "path": "detail.html",
+      "origin": "captured-structure-synthetic-content",
+      "personalData": "synthetic"
+    },
+    {
+      "path": "detail-partial.xml",
+      "origin": "captured-envelope-synthetic-content",
+      "inputViewState": "FIXTURE_VIEWSTATE_2",
+      "outputViewState": "FIXTURE_VIEWSTATE_3"
+    },
+    {
+      "path": "detail-superior-partial.xml",
+      "origin": "captured-envelope-synthetic-content",
+      "variant": "Corte Superior",
+      "outputViewState": "FIXTURE_VIEWSTATE_SUPERIOR_2"
+    },
+    {
+      "path": "partial-redirect.xml",
+      "origin": "synthetic-contractual",
+      "observed": false,
+      "node": "redirect"
+    },
+    {
+      "path": "partial-error.xml",
+      "origin": "synthetic-contractual",
+      "observed": false,
+      "node": "error"
+    },
+    {
+      "path": "invalid-viewstate-response.json",
+      "origin": "captured-metadata",
+      "bodyVersioned": false
+    },
+    { "path": "pdf-response-headers.json", "origin": "captured-metadata", "bodyVersioned": false },
+    { "path": "requests/search-page-1.urlencoded", "origin": "captured-payload-shape" },
+    { "path": "requests/page-2.urlencoded", "origin": "captured-payload-shape" },
+    { "path": "requests/detail.urlencoded", "origin": "captured-payload-shape" },
+    {
+      "path": "requests/universe-supreme.urlencoded",
+      "origin": "reconstructed-from-observed-controls"
+    },
+    {
+      "path": "requests/universe-superior.urlencoded",
+      "origin": "reconstructed-from-observed-controls"
+    },
+    { "path": "universe-supreme-receipt.json", "origin": "captured-metadata" },
+    { "path": "universe-superior-receipt.json", "origin": "captured-metadata" },
+    { "path": "universe-laudos-receipt.json", "origin": "captured-metadata" },
+    {
+      "path": "universe-reconciliation-attempt.json",
+      "origin": "captured-metadata",
+      "bodyVersioned": false
+    },
+    {
+      "path": "universe-reconciliation-retry.json",
+      "origin": "captured-metadata",
+      "bodyVersioned": false
+    },
+    {
+      "path": "corpus-reconciliation.schema.json",
+      "origin": "synthetic-contractual",
+      "observed": false
+    },
+    {
+      "path": "corpus-reconciliation-receipt.json",
+      "origin": "captured-metadata",
+      "bodyVersioned": false
+    },
+    { "path": "corpus-mutation-replay.json", "origin": "synthetic-contractual", "observed": false },
+    {
+      "path": "corpus-reconciliation-input.ndjson",
+      "origin": "synthetic-contractual",
+      "observed": false
+    },
+    { "path": "expected.json", "origin": "fixture-expectations" },
+    { "path": "fixture-manifest.json", "origin": "fixture-manifest" }
+  ]
+}

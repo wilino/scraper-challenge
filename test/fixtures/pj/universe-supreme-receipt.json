@@ -1,0 +1,11 @@
+{
+  "origin": "captured-metadata",
+  "payloadShape": "reconstructed-from-observed-controls",
+  "observed": true,
+  "query": { "corte": 1, "emptyFilters": true, "includeAutos": true, "order": "DESC" },
+  "status": 200,
+  "reportedGlobalTotal": 670050,
+  "queryResults": 580306,
+  "pageSize": 10,
+  "pages": 58031
+}

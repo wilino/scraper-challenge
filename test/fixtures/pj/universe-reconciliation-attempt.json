@@ -1,0 +1,51 @@
+{
+  "origin": "captured-metadata",
+  "observed": true,
+  "capturedAt": "2026-07-15",
+  "browser": {
+    "mainSuperior": {
+      "query": "buCorte=2 with otherwise empty visible filters",
+      "reportedGlobalTotal": 670051,
+      "queryResults": 88292,
+      "pages": 8830,
+      "autosControlVisibleAfterCorteSelection": false,
+      "exportControl": "formBuscador:j_idt413",
+      "exportAttempts": 1,
+      "downloadObserved": false,
+      "terminalSignal": "download-event-timeout-120000ms"
+    }
+  },
+  "curl": {
+    "historicalArbitration": {
+      "bootstrapStatus": 200,
+      "bootstrapContentType": "text/html",
+      "bootstrapBytes": 32624,
+      "searchAttemptsInSameSession": 2,
+      "searchStatus": 500,
+      "searchBodyBytes": 0,
+      "exportAttempted": false
+    },
+    "mainSuperior": {
+      "submittedReconstructedAutosParameter": true,
+      "searchRedirectStatus": 302,
+      "resultsStatus": 200,
+      "queryResults": 88292,
+      "exportControl": "formBuscador:j_idt519",
+      "exportAttempts": 1,
+      "exportStatus": 200,
+      "exportContentType": "text/html",
+      "exportBytes": 125911,
+      "validTabularExport": false
+    }
+  },
+  "reconciliation": {
+    "historicalResults": 1599,
+    "mainPartitionSum": 668598,
+    "reportedGlobalTotal": 670051,
+    "unreconciled": 1453,
+    "requiredHistoricalOverlap": 146,
+    "overlapObserved": false,
+    "classification": "external-export-unavailable"
+  },
+  "sensitiveBodiesVersioned": false
+}

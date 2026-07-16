@@ -1,0 +1,76 @@
+{
+  "origin": "captured-metadata",
+  "observed": true,
+  "capturedAt": "2026-07-16T03:21:59Z",
+  "snapshot": {
+    "startingGlobalTotal": 670051,
+    "startingMainSuperiorResults": 88292,
+    "endingGlobalTotal": 670052,
+    "stableDuringAttempt": false
+  },
+  "historicalArbitration": {
+    "queryResults": 1599,
+    "searchFlow": "full-post-302-same-origin-get",
+    "exportControl": "formBusqueda:j_idt57",
+    "exportStatus": 200,
+    "exportContentType": "application/vnd.ms-excel",
+    "exportBytes": 1026048,
+    "ole2Signature": true,
+    "dataRows": 1599,
+    "columns": 7,
+    "uuidOccurrences": 0,
+    "compositeIdentity": {
+      "fields": ["expediente", "tipoResolucion", "fechaResolucion", "salaSuperior"],
+      "completeRows": 1599,
+      "uniqueKeys": 1461,
+      "duplicateKeyGroups": 130,
+      "duplicateOccurrencesBeyondFirst": 138,
+      "maximumMultiplicity": 3
+    },
+    "bodyVersioned": false
+  },
+  "mainSuperior": {
+    "queryResults": 88292,
+    "pages": 8830,
+    "exportControl": "formBuscador:j_idt413",
+    "successfulControlsSerialized": 24,
+    "elapsedSeconds": 300,
+    "exportStatus": 502,
+    "exportContentType": "text/html",
+    "exportBytes": 393,
+    "validTabularExport": false
+  },
+  "annualProbe2026": {
+    "queryResults": 13096,
+    "minimalPayloadDiagnostic": {
+      "ole2Bytes": 4608,
+      "dataRows": 0,
+      "validForCoverage": false
+    },
+    "fullSuccessfulControlsAttempt": {
+      "successfulControlsSerialized": 24,
+      "elapsedSeconds": 180,
+      "curlExit": 28,
+      "responseBytes": 0,
+      "validTabularExport": false
+    }
+  },
+  "modernCommercial2025": {
+    "reportedGlobalTotal": 670052,
+    "queryResults": 900,
+    "classification": "main-superior-commercial-subset",
+    "exportControl": "formBuscador:j_idt413",
+    "successfulControlsSerialized": 16,
+    "elapsedSeconds": 150,
+    "responseBytes": 0,
+    "validTabularExport": false
+  },
+  "reconciliation": {
+    "requiredHistoricalOverlap": 146,
+    "overlapObserved": false,
+    "comparableMainRowsAvailable": false,
+    "unresolvedIdentityGreaterThanZero": true,
+    "classification": "main-export-unavailable-and-snapshot-mutated"
+  },
+  "sensitiveBodiesVersioned": false
+}

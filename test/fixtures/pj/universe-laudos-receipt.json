@@ -1,0 +1,73 @@
+{
+  "origin": "captured-metadata",
+  "observed": true,
+  "capturedAt": "2026-07-15",
+  "label": "Anulación y Ejecución de Laudos Arbitrales C.S.J. Lima",
+  "searchPath": "/jurisprudenciaweb/faces/page/resolucion-busqueda-especializada-superior.xhtml",
+  "resultsPath": "/jurisprudenciaweb/faces/page/resolucion-busqueda-resultado-superior.xhtml",
+  "fixedFilters": {
+    "corte": 2,
+    "instancia": 2,
+    "especialidad": 2
+  },
+  "allYearsResults": 1599,
+  "pageSize": 5,
+  "yearSamples": {
+    "2005": 5,
+    "2025": 0
+  },
+  "searchSubmit": "formBusqueda:j_idt64",
+  "searchRequestFieldNames": [
+    "formBusqueda",
+    "javax.faces.ViewState",
+    "formBusqueda:txtBusqueda",
+    "formBusqueda:cmbCorte",
+    "formBusqueda:cmbCorteInput",
+    "formBusqueda:cmbInstancia",
+    "formBusqueda:cmbInstanciaInput",
+    "formBusqueda:cmbEspecialidad",
+    "formBusqueda:cmbEspecialidadInput",
+    "formBusqueda:cmbOrgano",
+    "formBusqueda:cmbOrganoInput",
+    "formBusqueda:cmbTitulo",
+    "formBusqueda:cmbTituloInput",
+    "formBusqueda:buPalabraClaveValue",
+    "formBusqueda:buPalabraClaveInput",
+    "formBusqueda:buNroExpediente",
+    "formBusqueda:buAnio",
+    "formBusqueda:buAnioInput",
+    "formBusqueda:j_idt64",
+    "forward",
+    "busqueda",
+    "formBusqueda:j_idt67",
+    "formBusqueda:j_idt68"
+  ],
+  "searchSubmitValues": {
+    "forward": "buscar",
+    "busqueda": "especializada"
+  },
+  "export": {
+    "control": "formBusqueda:j_idt57",
+    "requestFieldNames": [
+      "formBusqueda",
+      "javax.faces.ViewState",
+      "formBusqueda:buOrden",
+      "formBusqueda:buOrdenInput",
+      "formBusqueda:buOrdenForma",
+      "formBusqueda:buOrdenFormaInput",
+      "formBusqueda:buPaginas",
+      "formBusqueda:buPaginasInput",
+      "formBusqueda:j_idt57"
+    ],
+    "status": 200,
+    "contentType": "application/vnd.ms-excel",
+    "filename": "Resoluciones_Superior_Comercial.xls",
+    "bytes": 1026048,
+    "bodyVersioned": false
+  },
+  "rowIdentityObserved": "ServletDescarga.uuid",
+  "intersectionWithMainPartitions": {
+    "requiredForFullReconciliation": 146,
+    "observed": false
+  }
+}

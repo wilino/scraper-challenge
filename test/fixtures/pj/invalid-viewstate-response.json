@@ -1,0 +1,9 @@
+{
+  "origin": "captured-metadata",
+  "condition": "invalid-redacted-viewstate",
+  "status": 500,
+  "contentType": "text/xml;charset=UTF-8",
+  "bodyBytes": 0,
+  "bodyVersioned": false,
+  "classification": "rebootstrap-required"
+}

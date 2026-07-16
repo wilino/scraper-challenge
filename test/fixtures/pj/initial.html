@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="es" data-origin="captured-structure-synthetic-content">
+  <head>
+    <meta charset="utf-8" />
+    <title>Jurisprudencia Nacional Sistematizada</title>
+  </head>
+  <body>
+    <form
+      id="formBuscador"
+      name="formBuscador"
+      method="post"
+      action="/jurisprudenciaweb/faces/page/inicio.xhtml"
+      enctype="application/x-www-form-urlencoded"
+    >
+      <input type="hidden" name="formBuscador" value="formBuscador" />
+      <input
+        type="hidden"
+        id="javax.faces.ViewState"
+        name="javax.faces.ViewState"
+        value="FIXTURE_VIEWSTATE_0"
+        autocomplete="off"
+      />
+      <input
+        type="hidden"
+        id="formBuscador:tabpanel-value"
+        name="formBuscador:tabpanel-value"
+        value="general"
+      />
+      <input
+        id="formBuscador:txtBusqueda"
+        name="formBuscador:txtBusqueda"
+        type="text"
+        value=""
+        maxlength="200"
+        title="Ingrese el texto a buscar"
+      />
+      <input id="formBuscador:varSuperiores" name="formBuscador:varSuperiores" type="checkbox" />
+      <input id="formBuscador:varAutos" name="formBuscador:varAutos" type="checkbox" />
+      <select id="formBuscador:buCorte" name="formBuscador:buCorte">
+        <option value="1" selected>Corte Suprema</option>
+        <option value="2">Corte Superior</option>
+      </select>
+      <select id="formBuscador:buDistrito" name="formBuscador:buDistrito">
+        <option value="0" selected>-- Todos --</option>
+      </select>
+      <select id="formBuscador:buEspecialidad" name="formBuscador:buEspecialidad">
+        <option value="0" selected>-- Todos --</option>
+        <option value="1">Civil</option>
+        <option value="10">Penal</option>
+      </select>
+      <select id="formBuscador:buSala" name="formBuscador:buSala">
+        <option value="0" selected>-- Todos --</option>
+      </select>
+      <input
+        type="hidden"
+        id="formBuscador:buPretensionDelitoSupValue"
+        name="formBuscador:buPretensionDelitoSupValue"
+        value=""
+      />
+      <input
+        type="text"
+        id="formBuscador:buPretensionDelitoSupInput"
+        name="formBuscador:buPretensionDelitoSupInput"
+        value=""
+      />
+      <input
+        type="hidden"
+        id="formBuscador:buPretensionValue"
+        name="formBuscador:buPretensionValue"
+        value=""
+      />
+      <input
+        type="text"
+        id="formBuscador:buPretensionInput"
+        name="formBuscador:buPretensionInput"
+        value=""
+      />
+      <input
+        type="hidden"
+        id="formBuscador:buPalabraClaveValue"
+        name="formBuscador:buPalabraClaveValue"
+        value=""
+      />
+      <input
+        type="text"
+        id="formBuscador:buPalabraClaveInput"
+        name="formBuscador:buPalabraClaveInput"
+        value=""
+      />
+      <input
+        type="text"
+        id="formBuscador:buNroExpediente"
+        name="formBuscador:buNroExpediente"
+        value=""
+      />
+      <select id="formBuscador:buAnio" name="formBuscador:buAnio">
+        <option value="" selected>-- Todos --</option>
+        <option value="2026">2026</option>
+      </select>
+      <input
+        type="image"
+        name="formBuscador:j_idt31"
+        src="../images/btn-buscar.png"
+        onclick="
+          mojarra.jsfcljs(
+            document.getElementById('formBuscador'),
+            {
+              'formBuscador:j_idt31': 'formBuscador:j_idt31',
+              'forward': 'buscar',
+              'busqueda': 'especializada',
+              'formBuscador:j_idt34': '21',
+              'formBuscador:j_idt35': 'DESC',
+              'formBuscador:j_idt36': 'Principal',
+              'formBuscador:j_idt37': '1',
+            },
+            '',
+          );
+          return false;
+        "
+      />
+    </form>
+  </body>
+</html>

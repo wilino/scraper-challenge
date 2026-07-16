@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "origin": "synthetic-contractual",
+  "observed": false,
+  "strategy": "repeat-until-no-new-identities",
+  "pageSize": 2,
+  "mutation": {
+    "kind": "insert-at-front-between-pages",
+    "identity": "SYN-005",
+    "afterPass": 0,
+    "afterPage": 1
+  },
+  "passes": [
+    {
+      "pass": 1,
+      "initialTotal": 4,
+      "finalTotal": 5,
+      "pages": [["SYN-004", "SYN-003"], ["SYN-003", "SYN-002"], ["SYN-001"]],
+      "expectedNewIdentities": ["SYN-004", "SYN-003", "SYN-002", "SYN-001"]
+    },
+    {
+      "pass": 2,
+      "initialTotal": 5,
+      "finalTotal": 5,
+      "pages": [["SYN-005", "SYN-004"], ["SYN-003", "SYN-002"], ["SYN-001"]],
+      "expectedNewIdentities": ["SYN-005"]
+    },
+    {
+      "pass": 3,
+      "initialTotal": 5,
+      "finalTotal": 5,
+      "pages": [["SYN-005", "SYN-004"], ["SYN-003", "SYN-002"], ["SYN-001"]],
+      "expectedNewIdentities": []
+    }
+  ],
+  "singlePassWouldMiss": ["SYN-005"],
+  "expectedFinalIdentities": ["SYN-001", "SYN-002", "SYN-003", "SYN-004", "SYN-005"],
+  "expectedConvergedAfterPass": 3
+}

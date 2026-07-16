@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 1,
+  "origin": "captured-metadata",
+  "observed": true,
+  "capturedAt": "2026-07-16T03:21:59Z",
+  "commit": null,
+  "environment": {
+    "country": "Peru",
+    "access": "authorized-direct"
+  },
+  "definitions": {
+    "publishedGlobalTotal": "Contador global publicado; referencia externa que no es una partición navegable.",
+    "queryTotal": "Resultados reportados por una consulta o partición concreta.",
+    "publiclyEnumerableCorpus": "Unión deduplicada por identidad demostrada de todas las particiones públicas incluidas.",
+    "notEnumerableWithReason": "Diferencia demostrada que la interfaz pública no permite enumerar, con causa y aprobación."
+  },
+  "partitions": [
+    {
+      "id": "supreme-including-autos",
+      "classification": "candidate",
+      "queryTotals": { "initial": 580306, "final": 580306 },
+      "enumeration": {
+        "rawMemberships": null,
+        "uniqueDocuments": null,
+        "duplicateOccurrences": null,
+        "enumeratedDocuments": null,
+        "withResolvedIdentity": null,
+        "unresolvedIdentity": null,
+        "evidenceStatus": "count-only"
+      },
+      "identity": {
+        "preferred": "native-document-uuid",
+        "observedInList": true,
+        "enumerated": false
+      },
+      "evidence": ["test/fixtures/pj/universe-supreme-receipt.json"]
+    },
+    {
+      "id": "superior-visible-controls",
+      "classification": "candidate",
+      "queryTotals": { "initial": 88292, "final": 88292 },
+      "enumeration": {
+        "rawMemberships": null,
+        "uniqueDocuments": null,
+        "duplicateOccurrences": null,
+        "enumeratedDocuments": null,
+        "withResolvedIdentity": null,
+        "unresolvedIdentity": null,
+        "evidenceStatus": "count-only"
+      },
+      "identity": {
+        "preferred": "native-document-uuid",
+        "observedInList": true,
+        "enumerated": false
+      },
+      "evidence": ["test/fixtures/pj/universe-reconciliation-attempt.json"]
+    },
+    {
+      "id": "historical-arbitration-lima",
+      "classification": "candidate",
+      "queryTotals": { "initial": 1599, "final": 1599 },
+      "enumeration": {
+        "rawMemberships": 1599,
+        "uniqueDocuments": null,
+        "duplicateOccurrences": null,
+        "enumeratedDocuments": 1599,
+        "withResolvedIdentity": 1331,
+        "unresolvedIdentity": 268,
+        "evidenceStatus": "enumerated-unresolved"
+      },
+      "identity": {
+        "preferred": "native-or-pdf-uuid-from-public-detail",
+        "xlsUuidOccurrences": 0,
+        "nonCollidingCompositeRows": 1331,
+        "collidingRows": 268,
+        "compositeUniqueKeys": 1461,
+        "duplicateKeyGroups": 130,
+        "duplicateOccurrencesBeyondFirst": 138,
+        "maximumMultiplicity": 3
+      },
+      "evidence": ["test/fixtures/pj/universe-reconciliation-retry.json"]
+    }
+  ],
+  "excludedQueries": [
+    {
+      "id": "modern-commercial-2025",
+      "classification": "subset",
+      "queryTotal": 900,
+      "reason": "Ruta ya clasificada como subconjunto de Corte Superior; no se suma como partición."
+    },
+    {
+      "id": "superior-year-2026",
+      "classification": "year-shard",
+      "queryTotal": 13096,
+      "reason": "Sonda operativa; no se demostró que la unión de todos los años equivalga a la consulta madre."
+    }
+  ],
+  "membershipRegions": [],
+  "intersections": [
+    {
+      "left": "supreme-including-autos",
+      "right": "superior-visible-controls",
+      "documents": null,
+      "evidenceStatus": "not-observed"
+    },
+    {
+      "left": "supreme-including-autos",
+      "right": "historical-arbitration-lima",
+      "documents": null,
+      "evidenceStatus": "not-observed"
+    },
+    {
+      "left": "superior-visible-controls",
+      "right": "historical-arbitration-lima",
+      "documents": null,
+      "evidenceStatus": "not-observed"
+    },
+    {
+      "left": "main-partitions",
+      "right": "historical-arbitration-lima",
+      "documents": 146,
+      "evidenceStatus": "hypothesis"
+    }
+  ],
+  "consistencyStrategy": {
+    "kind": "repeat-until-no-new-identities",
+    "stableOrderDemonstrated": false,
+    "replay": "test/fixtures/pj/corpus-mutation-replay.json",
+    "liveConvergenceObserved": false
+  },
+  "reconciliation": {
+    "queryRawMemberships": 670197,
+    "rawMemberships": null,
+    "uniqueDocuments": null,
+    "duplicateOccurrences": null,
+    "enumeratedDocuments": null,
+    "withResolvedIdentity": null,
+    "unresolvedIdentity": null,
+    "publishedGlobalTotal": { "initial": 670051, "final": 670052, "stable": false },
+    "publiclyEnumerableCorpus": null,
+    "notEnumerableWithReason": {
+      "count": null,
+      "reason": null,
+      "evidenceStatus": "not-demonstrated"
+    },
+    "unknownTerms": [
+      "rawMemberships",
+      "uniqueDocuments",
+      "duplicateOccurrences",
+      "enumeratedDocuments",
+      "withResolvedIdentity",
+      "unresolvedIdentity",
+      "publiclyEnumerableCorpus",
+      "notEnumerableWithReason",
+      "identity-derived intersections"
+    ]
+  },
+  "scopeApproval": { "status": "pending", "approver": null, "evidence": null },
+  "exceptions": [
+    "El contador global mutó durante la ventana y no se usa como partición.",
+    "La intersección histórica de 146 es una hipótesis aritmética, no una observación.",
+    "No se versionaron filas, UUIDs reales, XLS, PDFs, cookies ni ViewState."
+  ],
+  "privacy": { "identifiersEmitted": false, "sourceRowsEmitted": false },
+  "status": "FAIL",
+  "failureReasons": [
+    "Las particiones principales no fueron enumeradas por identidad.",
+    "La colección histórica conserva 268 filas en grupos de clave compuesta colisionada.",
+    "Las intersecciones por identidad no fueron observadas.",
+    "La diferencia no enumerable no está demostrada.",
+    "La estrategia y el reconciliador están probados con datos sintéticos, no en una corrida live completa.",
+    "La evidencia no está ligada a un commit y el alcance no tiene aprobación explícita."
+  ]
+}

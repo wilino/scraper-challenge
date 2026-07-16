@@ -1,0 +1,200 @@
+{
+  "form": {
+    "selector": "form#formBuscador",
+    "method": "post",
+    "initialAction": "/jurisprudenciaweb/faces/page/inicio.xhtml",
+    "resultsAction": "/jurisprudenciaweb/faces/page/resultado.xhtml",
+    "viewStateName": "javax.faces.ViewState",
+    "requiredResultControls": [
+      "formBuscador",
+      "javax.faces.ViewState",
+      "formBuscador:txtBusqueda",
+      "formBuscador:buCorte",
+      "formBuscador:buDistrito",
+      "formBuscador:buEspecialidad",
+      "formBuscador:buPretensionValue",
+      "formBuscador:buPretensionInput",
+      "formBuscador:buPalabraClaveValue",
+      "formBuscador:buPalabraClaveInput",
+      "formBuscador:buNroExpediente",
+      "formBuscador:buSala",
+      "formBuscador:buPretensionDelitoSupValue",
+      "formBuscador:buPretensionDelitoSupInput",
+      "formBuscador:buTipoRecurso",
+      "formBuscador:buTipoResolucion",
+      "formBuscador:buTipoResolucionInput",
+      "formBuscador:buAnio",
+      "formBuscador:buOrden",
+      "formBuscador:buOrdenForma",
+      "formBuscador:j_idt434",
+      "formBuscador:spinner",
+      "formBuscador:j_idt540",
+      "formBuscador:spinner2"
+    ]
+  },
+  "pages": {
+    "pageSize": 10,
+    "totalResults": 151191,
+    "maxValue": 15120,
+    "page1CurrentPage": 1,
+    "page2CurrentPage": 2,
+    "page1RecordIndexes": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    "page2RecordIndexes": [10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+    "page1ViewState": "FIXTURE_VIEWSTATE_1",
+    "page2ViewState": "FIXTURE_VIEWSTATE_2",
+    "lastPageContract": {
+      "origin": "captured-structure-synthetic-content",
+      "observed": true,
+      "currentPage": 15120,
+      "maxValue": 15120,
+      "observedRecordIndexes": [151190]
+    }
+  },
+  "listFields": [
+    "recurso",
+    "nroexp",
+    "pretensiones",
+    "tipoResolucion",
+    "fechaResolucion",
+    "sala",
+    "normaDI",
+    "sumilla",
+    "palabras"
+  ],
+  "partialUpdates": [
+    "formBuscador:panelDescarga1",
+    "formBuscador:spinner",
+    "formBuscador:data1",
+    "formBuscador:panel",
+    "formBuscador:panelDescarga2",
+    "formBuscador:spinner2",
+    "formBuscador:data2",
+    "j_idt703",
+    "javax.faces.ViewState"
+  ],
+  "detailPartial": {
+    "inputViewState": "FIXTURE_VIEWSTATE_2",
+    "outputViewState": "FIXTURE_VIEWSTATE_3",
+    "updates": ["formBuscador:popupResolucion", "j_idt703", "javax.faces.ViewState"]
+  },
+  "detailLabels": [
+    "Fecha de la Resolución:",
+    "Tipo de Resolución:",
+    "Fallo/Sentido de la Resolución:",
+    "Jueces Supremos:",
+    "Ponente:",
+    "Dirimente:",
+    "Discordia:",
+    "Voto Concordado:",
+    "Fundamentos Adicionales:",
+    "Sumilla:",
+    "Norma de Derecho Interno:",
+    "Jurisprudencia Nacional/Acuerdo Plenario:",
+    "Norma de Derecho Internacional:",
+    "Organismo Emisor de Jursiprudencia Internacional:",
+    "Palabras Clave:",
+    "Relevante:",
+    "Vinculante:",
+    "Fecha de Publicación en El Peruano:",
+    "Especialidad:",
+    "Sala:",
+    "Distrito Judicial de Procedencia:",
+    "Materia de la Causa:",
+    "Pretensión/Delito:",
+    "Régimen Procesal:",
+    "Tipo de Proceso:",
+    "N° de Expediente de la Sala Superior:",
+    "Archivo de la Resolución:",
+    "Fecha de Demanda:",
+    "Fecha de Calificación:",
+    "Organo Jurisdiccional de procedencia:",
+    "Fallo:",
+    "Expediente de Procedencia:",
+    "Fecha de Resolución de Procedencia:",
+    "Organo Jurisdiccional de Origen:",
+    "Fallo de Origen:",
+    "Tipo de Resolución de Origen:",
+    "Expediente de Origen:",
+    "Fecha de Resolución de Origen:",
+    "Fecha de Denuncia de Origen:"
+  ],
+  "superior": {
+    "recordIndexes": [0, 1],
+    "detailSourceSuffix": "j_idt503",
+    "popupId": "formBuscador:popupResolucionSuperior",
+    "updates": ["formBuscador:popupResolucionSuperior", "j_idt703", "javax.faces.ViewState"],
+    "outputViewState": "FIXTURE_VIEWSTATE_SUPERIOR_2",
+    "variantLabels": ["Jueces:", "Instancia:", "Distrito:", "Proceso:", "Pretención/Delito:"]
+  },
+  "partialNodeFixtures": {
+    "redirect": {
+      "origin": "synthetic-contractual",
+      "observed": false,
+      "url": "/jurisprudenciaweb/faces/page/inicio.xhtml"
+    },
+    "error": {
+      "origin": "synthetic-contractual",
+      "observed": false,
+      "name": "javax.faces.application.ViewExpiredException"
+    }
+  },
+  "invalidViewState": {
+    "origin": "captured-metadata",
+    "status": 500,
+    "contentType": "text/xml;charset=UTF-8",
+    "bodyBytes": 0,
+    "classification": "rebootstrap-required"
+  },
+  "universe": {
+    "globalTotal": 670050,
+    "partitions": [
+      { "name": "supreme", "corte": "1", "results": 580306, "pages": 58031 },
+      { "name": "superior", "corte": "2", "results": 88291, "pages": 8830 }
+    ],
+    "partitionSum": 668597,
+    "unreconciled": 1453,
+    "historicalArbitration": {
+      "results": 1599,
+      "pageSize": 5,
+      "requiredOverlap": 146,
+      "overlapObserved": false
+    },
+    "latestReconciliationAttempt": {
+      "globalTotal": 670051,
+      "mainSuperiorResults": 88292,
+      "mainPartitionSum": 668598,
+      "historicalResults": 1599,
+      "requiredOverlap": 146,
+      "overlapObserved": false,
+      "classification": "external-export-unavailable"
+    },
+    "reconciliationRetry": {
+      "startingGlobalTotal": 670051,
+      "endingGlobalTotal": 670052,
+      "historicalResults": 1599,
+      "historicalRows": 1599,
+      "historicalUniqueCompositeKeys": 1461,
+      "mainSuperiorResults": 88292,
+      "annual2026Results": 13096,
+      "modernCommercial2025Results": 900,
+      "requiredOverlap": 146,
+      "overlapObserved": false,
+      "classification": "main-export-unavailable-and-snapshot-mutated"
+    },
+    "payloadShape": "reconstructed-from-observed-controls"
+  },
+  "syntheticUuid": {
+    "document": "00000000-0000-4000-8000-000000000011",
+    "pdf": "00000000-0000-4000-8000-000000009011",
+    "word": "00000000-0000-4000-8000-000000009021",
+    "superiorDocument": "00000000-0000-4000-8000-000000000101",
+    "superiorPdf": "00000000-0000-4000-8000-000000009101",
+    "superiorWord": "00000000-0000-4000-8000-000000009102"
+  },
+  "download": {
+    "path": "/jurisprudenciaweb/ServletDescarga",
+    "queryKey": "uuid",
+    "classification": "stable-url",
+    "magic": "%PDF-"
+  }
+}

@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/pj/corpus-reconciliation.schema.json",
+  "title": "Recibo anonimizado de reconciliación del corpus PJ",
+  "schemaVersion": 2,
+  "supportedReceiptVersions": [1, 2],
+  "origin": "synthetic-contractual",
+  "observed": false,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "origin",
+    "observed",
+    "capturedAt",
+    "commit",
+    "environment",
+    "definitions",
+    "partitions",
+    "excludedQueries",
+    "intersections",
+    "consistencyStrategy",
+    "reconciliation",
+    "scopeApproval",
+    "exceptions",
+    "status",
+    "failureReasons"
+  ],
+  "properties": {
+    "schemaVersion": { "enum": [1, 2] },
+    "origin": { "enum": ["captured-metadata", "synthetic-contractual"] },
+    "observed": { "type": "boolean" },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+    "environment": {
+      "type": "object",
+      "required": ["country", "access"],
+      "properties": {
+        "country": { "type": "string" },
+        "access": { "type": "string" }
+      }
+    },
+    "definitions": {
+      "type": "object",
+      "required": [
+        "publishedGlobalTotal",
+        "queryTotal",
+        "publiclyEnumerableCorpus",
+        "notEnumerableWithReason"
+      ],
+      "additionalProperties": { "type": "string" }
+    },
+    "partitions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/partition" } },
+    "excludedQueries": { "type": "array", "items": { "type": "object" } },
+    "membershipRegions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["partitions", "documents"],
+        "properties": {
+          "partitions": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "documents": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "intersections": { "type": "array", "items": { "$ref": "#/$defs/intersection" } },
+    "consistencyStrategy": { "$ref": "#/$defs/strategy" },
+    "reconciliation": { "$ref": "#/$defs/reconciliation" },
+    "scopeApproval": {
+      "type": "object",
+      "required": ["status", "approver", "evidence"],
+      "properties": {
+        "status": { "enum": ["pending", "approved"] },
+        "approver": { "type": ["string", "null"] },
+        "evidence": { "type": ["string", "null"] }
+      }
+    },
+    "exceptions": { "type": "array", "items": { "type": "string" } },
+    "identityReviewSummary": { "type": "object" },
+    "privacy": {
+      "type": "object",
+      "properties": {
+        "identifiersEmitted": { "const": false },
+        "sourceRowsEmitted": { "const": false }
+      }
+    },
+    "status": { "enum": ["PASS", "FAIL"] },
+    "failureReasons": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "nullableCount": { "type": ["integer", "null"], "minimum": 0 },
+    "partition": {
+      "type": "object",
+      "required": ["id", "classification", "queryTotals", "enumeration", "evidence"],
+      "properties": {
+        "id": { "type": "string" },
+        "classification": { "enum": ["candidate", "included", "subset", "year-shard"] },
+        "queryFingerprint": { "type": ["string", "null"] },
+        "queryTotals": {
+          "type": "object",
+          "required": ["initial", "final"],
+          "properties": {
+            "initial": { "$ref": "#/$defs/nullableCount" },
+            "final": { "$ref": "#/$defs/nullableCount" }
+          }
+        },
+        "enumeration": {
+          "type": "object",
+          "required": [
+            "rawMemberships",
+            "uniqueDocuments",
+            "duplicateOccurrences",
+            "enumeratedDocuments",
+            "withResolvedIdentity",
+            "unresolvedIdentity",
+            "evidenceStatus"
+          ],
+          "properties": {
+            "rawMemberships": { "$ref": "#/$defs/nullableCount" },
+            "uniqueDocuments": { "$ref": "#/$defs/nullableCount" },
+            "duplicateOccurrences": { "$ref": "#/$defs/nullableCount" },
+            "enumeratedDocuments": { "$ref": "#/$defs/nullableCount" },
+            "withResolvedIdentity": { "$ref": "#/$defs/nullableCount" },
+            "unresolvedIdentity": { "$ref": "#/$defs/nullableCount" },
+            "evidenceStatus": {
+              "enum": ["count-only", "enumerated-unresolved", "enumerated-resolved"]
+            }
+          }
+        },
+        "passes": { "type": "array", "items": { "type": "object" } },
+        "identityResolutionCounts": { "type": "object" },
+        "identity": { "type": "object" },
+        "evidence": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "intersection": {
+      "type": "object",
+      "required": ["left", "right", "documents", "evidenceStatus"],
+      "properties": {
+        "left": { "type": "string" },
+        "right": { "type": "string" },
+        "documents": { "$ref": "#/$defs/nullableCount" },
+        "evidenceStatus": { "enum": ["not-observed", "hypothesis", "identity-derived"] }
+      }
+    },
+    "strategy": {
+      "type": "object",
+      "required": ["kind", "liveConvergenceObserved"],
+      "properties": {
+        "kind": { "const": "repeat-until-no-new-identities" },
+        "stableOrderDemonstrated": { "type": "boolean" },
+        "replay": { "type": "string" },
+        "liveConvergenceObserved": { "type": "boolean" },
+        "countersRecordedPerPass": { "type": "boolean" }
+      }
+    },
+    "reconciliation": {
+      "type": "object",
+      "required": [
+        "rawMemberships",
+        "uniqueDocuments",
+        "duplicateOccurrences",
+        "enumeratedDocuments",
+        "withResolvedIdentity",
+        "unresolvedIdentity",
+        "publishedGlobalTotal",
+        "publiclyEnumerableCorpus",
+        "notEnumerableWithReason",
+        "unknownTerms"
+      ],
+      "properties": {
+        "queryRawMemberships": { "$ref": "#/$defs/nullableCount" },
+        "rawMemberships": { "$ref": "#/$defs/nullableCount" },
+        "uniqueDocuments": { "$ref": "#/$defs/nullableCount" },
+        "duplicateOccurrences": { "$ref": "#/$defs/nullableCount" },
+        "enumeratedDocuments": { "$ref": "#/$defs/nullableCount" },
+        "withResolvedIdentity": { "$ref": "#/$defs/nullableCount" },
+        "unresolvedIdentity": { "$ref": "#/$defs/nullableCount" },
+        "publishedGlobalTotal": {
+          "type": "object",
+          "required": ["initial", "final", "stable"],
+          "properties": {
+            "initial": { "$ref": "#/$defs/nullableCount" },
+            "final": { "$ref": "#/$defs/nullableCount" },
+            "stable": { "type": "boolean" }
+          }
+        },
+        "publiclyEnumerableCorpus": { "$ref": "#/$defs/nullableCount" },
+        "notEnumerableWithReason": {
+          "type": "object",
+          "required": ["count", "reason", "evidenceStatus"],
+          "properties": {
+            "count": { "$ref": "#/$defs/nullableCount" },
+            "reason": { "type": ["string", "null"] },
+            "evidenceStatus": { "enum": ["not-demonstrated", "demonstrated"] }
+          }
+        },
+        "unknownTerms": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
